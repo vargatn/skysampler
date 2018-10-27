@@ -1,4 +1,5 @@
 import sys
+import os
 from setuptools import setup, find_packages
 
 if sys.version_info[0] != 3:
@@ -11,3 +12,10 @@ setup(name="skysampler",
       author="Tamas Norbert Varga",
       author_email="T.Varga@physik.lmu.de",
       version="0.0")
+
+# create user project file
+home_path = os.path.expanduser("~")
+project_path = os.getcwd()
+with open(home_path + "/.skysampler.yaml", "w+") as file:
+    message = "project_path: " + project_path + "/"
+    file.write(message)
