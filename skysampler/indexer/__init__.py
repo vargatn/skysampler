@@ -1,1 +1,0 @@
-# TODO This should be a generic catalog processor which indexes up the input and creates the parameter space
