@@ -1,2 +1,2 @@
 # skysampler
-Generate random relaizations of line-of-sights in optical sky surveys
+Generate random realizations of line-of-sights in optical sky surveys
