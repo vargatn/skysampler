@@ -26,6 +26,7 @@ import pickle
 import astropy.units as u
 
 from .utils import to_pandas
+from .paths import settings
 
 BADVAL = -9999.
 
@@ -92,25 +93,53 @@ class SurveyData(object):
 
 
 class TargetData(object):
-    """
-    Simple wrapper for unified handling of clusters and random point tables
-    """
     def __init__(self, fname):
+        """
+        Simple wrapper for unified handling of clusters and random point tables
 
-        self.data = fio.read(fname)
+        Exposes richness, redshift, ra, dec columns
 
-        # convert to pandas
+        Parameters
+        ----------
+        fname: str
+            File name for fits table to use
 
-        # figure out which catalog this is
+        """
+        _data = fio.read(fname)
+        self.data = to_pandas(_data)
 
+        try:
+            self.richness = self.data.LAMBDA_CHISQ
+            self.redshift = self.data.Z_LAMBDA
+            self.mode = "clust"
+        except:
+            self.richness = self.data.AVG_LAMBDAOUT
+            self.redshift = self.data.ZTRUE
+            self.mode = "rands"
 
-        pass
+        self.ra = self.data.RA
+        self.dec = self.data.DEC
 
-    def write(self):
-        pass
+    @classmethod
+    def from_package(cls, mode):
+        """
+        Automatically reads from settings
 
-    def load(self):
-        pass
+        Parameters
+        ----------
+        mode: str
+            clust or rands
+
+        """
+
+        if mode == "clust":
+            fname = settings["catalogs"]["targets"]["clust"]
+        elif mode == "rands":
+            fname = settings["catalogs"]["targets"]["rands"]
+        else:
+            raise KeyError("Currently only clust and rands mode is supported")
+
+        return cls(fname)
 
 
 class SurveyIndexer(object):
