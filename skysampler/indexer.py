@@ -17,16 +17,71 @@ We should control it from a config file.
 
 """
 
+import glob
+import fitsio as fio
+import numpy as np
+import pandas as pd
+import healpy as hp
+import pickle
+import astropy.units as u
+
+from .utils import to_pandas
+
 BADVAL = -9999.
 
+# TODO currently only implement in Memory version
+
+
+def subsample(tab, nrows=1e3, rng=None, replace=False):
+    """
+    Choose rows randomly from pandas DataFrame
+
+    Parameters
+    ----------
+    tab: pd.DataFrame
+        input table
+    nrows: int
+        number of rows to choose, automatically capped at table length
+    rng: np.random.RandomState
+        random number generator
+    replace: bool
+        draw with replacement or not
+
+    Returns
+    -------
+    pd.DataFrame
+        random row subset of input table
+
+    """
+
+    if rng is None:
+        rng = np.random.RandomState()
+
+    nrows=np.min((len(tab), int(round(nrows))))
+    allinds = np.arange(len(tab))
+    inds = allinds[rng.choice(allinds, nrows, replace=replace)]
+    return tab.iloc[inds]
+
+
+
 class SurveyData(object):
-    """
-    Interface for Survey Data on disk
+    def __init__(self, settings):
+        """
+        Interface for Survey Data on disk
+        """
 
+        # create file paths based on regular expression
+        self.all_fnames = np.sort(glob.glob(settings["catalogs"]["survey"]["wide_data_expr"]))
+        self.fnames = self.all_fnames[settings["catalogs"]["survey"]["chunk_min"]:settings["catalogs"]["survey"]["chunk_max"]]
 
-    Should know about file paths, and be able to loop through the files, reading them one by one
-    """
-    def __init__(self):
+        # open them
+        self.columns = fio.FITS(self.fnames[0])[1]
+
+    def read_data(self):
+
+        # read all files and convert to pandas
+
+        # add pixes to galaxy table after reading
         pass
 
     def write(self):
@@ -38,9 +93,17 @@ class SurveyData(object):
 
 class TargetData(object):
     """
-
+    Simple wrapper for unified handling of clusters and random point tables
     """
-    def __init__(self):
+    def __init__(self, fname):
+
+        self.data = fio.read(fname)
+
+        # convert to pandas
+
+        # figure out which catalog this is
+
+
         pass
 
     def write(self):
@@ -61,6 +124,52 @@ class SurveyIndexer(object):
     """
     def __init__(self):
         pass
+
+    def index(self):
+
+        pass
+
+    # corrprof = np.zeros(len(redges) - 1)
+    # radius = 6. / 180. * np.pi
+    #
+    # container = [[] for tmp in np.arange(len(redges) - 1)]
+    # for i in np.arange(len(ctab)):
+    #     print(i, "/", len(ctab), end="\r")
+    #     clust = ctab.iloc[i]
+    #
+    #     # disc query pixes around cluster
+    #     cpix = hp.ang2pix(nside, clust.RA, clust.DEC, lonlat=True)
+    #     dpixes = hp.query_disc(nside, hp.pix2vec(nside, cpix), radius=radius, )
+    #
+    #     # pandas query
+    #     gals = []
+    #     for dpix in dpixes:
+    #         cmd = "IPIX == " + str(dpix)
+    #         gals.append(table.query(cmd))
+    #     gals = pd.concat(gals)
+    #
+    #     try:
+    #         zclust = clust.Z_LAMBDA
+    #     except:
+    #         zclust = clust.ZTRUE
+    #
+    #     # distances
+    #     scale = 60.
+    #     darr = np.sqrt((+ clust.RA - gals.RA) ** 2. + (clust.DEC - gals.DEC) ** 2.) * scale
+    #     gals["DIST"] = darr
+    #     corrprof += np.histogram(darr, bins=redges)[0]
+    #
+    #     for j in np.arange(len(redges) - 1):
+    #         cmd = str(redges[j]) + " < DIST < " + str(redges[j + 1])
+    #         rsub = gals.query(cmd)
+    #         container[j].append(rsub.index.values)
+    #
+    # # reformatting results
+    # indexes, counts = [], []
+    # for j in np.arange(len(redges) - 1):
+    #     _uniqs, _counts = np.unique(np.concatenate(container[j]), return_counts=True)
+    #     indexes.append(_uniqs)
+    #     counts.append(_counts)
 
 
 class IndexedDataContainer(object):
