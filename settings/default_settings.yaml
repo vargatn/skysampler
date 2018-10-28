@@ -1,0 +1,10 @@
+#########################################################
+#
+#   These are the Default Paths
+#
+#
+#
+#########################################################
+
+logger_path: [PACKAGE]/logs
+config_path: [PACKAGE]/settings

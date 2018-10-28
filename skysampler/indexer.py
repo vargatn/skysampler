@@ -36,6 +36,20 @@ class SurveyData(object):
         pass
 
 
+class TargetData(object):
+    """
+
+    """
+    def __init__(self):
+        pass
+
+    def write(self):
+        pass
+
+    def load(self):
+        pass
+
+
 class SurveyIndexer(object):
     """
     Do the indexing of the Data based on passed cluster DataFrame
