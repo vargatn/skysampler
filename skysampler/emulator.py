@@ -9,7 +9,7 @@ e.g. radial number profile (in absolute terms)
 
 class ClusterFeatureEmulator(object):
     """
-    Should take a feature space as an input along with some settings, a
+    Should take a feature space as an input along with some config, a
 
     Should be
     """

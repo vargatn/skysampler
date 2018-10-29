@@ -26,7 +26,9 @@ import pickle
 import astropy.units as u
 
 from .utils import to_pandas
-from .paths import settings
+from .paths import setup_logger, logfile_info, config
+
+logger = setup_logger("INDEXER", level=config["logging_level"], logfile_info=logfile_info)
 
 BADVAL = -9999.
 
@@ -64,32 +66,44 @@ def subsample(tab, nrows=1e3, rng=None, replace=False):
     return tab.iloc[inds]
 
 
-
 class SurveyData(object):
-    def __init__(self, settings):
+    def __init__(self, fnames, nside):
         """
         Interface for Survey Data on disk
         """
 
-        # create file paths based on regular expression
-        self.all_fnames = np.sort(glob.glob(settings["catalogs"]["survey"]["wide_data_expr"]))
-        self.fnames = self.all_fnames[settings["catalogs"]["survey"]["chunk_min"]:settings["catalogs"]["survey"]["chunk_max"]]
-
-        # open them
+        self.nside = nside
+        self.fnames = fnames
         self.columns = fio.FITS(self.fnames[0])[1]
+        self.data = None
+        self.ra = None
+        self.dec = None
+        self.ipix = None
 
-    def read_data(self):
+        logger.critical("initated SurveyData")
 
-        # read all files and convert to pandas
+    @classmethod
+    def from_config(cls, config):
+        """Creates object based on config file"""
+        all_fnames = np.sort(glob.glob(config["catalogs"]["survey"]["wide_data_expr"]))
+        fnames = all_fnames[config["catalogs"]["survey"]["chunk_min"]:config["catalogs"]["survey"]["chunk_max"]]
 
-        # add pixes to galaxy table after reading
-        pass
+        return cls(fnames=fnames, nside=config["catalogs"]["survey"]["nside"])
 
-    def write(self):
-        pass
+    def read_all(self):
+        """Reads all data to memory"""
+        data = []
+        for fname in self.fnames:
+            data.append(fio.read(fname))
+        data = np.hstack(data)
+        self.data = to_pandas(data)
 
-    def load(self):
-        pass
+        self.ra = self.data.RA
+        self.dec = self.data.DEC
+
+        self.data["IPIX"] = hp.ang2pix(self.nside, self.ra, self.dec, lonlat=True)
+        self.ipix = self.data.IPIX
+        logger.critical("Read Survey data to memory")
 
 
 class TargetData(object):
@@ -120,10 +134,12 @@ class TargetData(object):
         self.ra = self.data.RA
         self.dec = self.data.DEC
 
+        logger.critical("initated TargetData in " + self.mode + " mode")
+
     @classmethod
-    def from_package(cls, mode):
+    def from_config(cls, mode, config):
         """
-        Automatically reads from settings
+        Automatically reads from config
 
         Parameters
         ----------
@@ -133,9 +149,9 @@ class TargetData(object):
         """
 
         if mode == "clust":
-            fname = settings["catalogs"]["targets"]["clust"]
+            fname = config["catalogs"]["targets"]["clust"]
         elif mode == "rands":
-            fname = settings["catalogs"]["targets"]["rands"]
+            fname = config["catalogs"]["targets"]["rands"]
         else:
             raise KeyError("Currently only clust and rands mode is supported")
 

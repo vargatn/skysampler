@@ -95,16 +95,16 @@ default_paths_file = project_path + "/settings/default_paths.yaml"
 custom_paths_file = project_path + "/settings/paths.yaml"
 
 if project_path is not None:
-    settings = read_paths(default_paths_file, project_path)
+    config = read_paths(default_paths_file, project_path)
     custom_settings = read_paths(custom_paths_file, project_path)
-    settings.update(custom_settings)
+    config.update(custom_settings)
 
 
-    settings.update(read_yaml(settings["config_path"]))
-    logfile_info = assign_logfile(settings)
+    config.update(read_yaml(config["config_path"]))
+    logfile_info = assign_logfile(config)
 
-    logger = setup_logger("PATHS", level=settings["logging_level"], logfile_info=logfile_info)
-    logger.critical("settings read from file: " + settings["config_path"])
+    logger = setup_logger("PATHS", level=config["logging_level"], logfile_info=logfile_info)
+    logger.critical("config read from file: " + config["config_path"])
 
 
 

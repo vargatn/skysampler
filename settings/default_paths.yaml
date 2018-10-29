@@ -9,4 +9,4 @@
 
 
 logger_path: PACKAGE/logs/default_run_STAMP.log
-config_path: PACKAGE/settings/default_config.yaml
+config_path: PACKAGE/config/default_config.yaml
