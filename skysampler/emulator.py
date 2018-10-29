@@ -7,6 +7,33 @@ e.g. radial number profile (in absolute terms)
 """
 
 
+
+class FeatureSpaceContainer(object):
+    """
+    Container for Feature space (should be very fine histogram, to reduce memory size
+
+    We will use it for later processing, and for this reason should be completely self-standing, and not memory heavy
+    """
+    def __init__(self):
+        pass
+
+    def write(self):
+        pass
+
+    def load(self):
+        pass
+
+
+def extract_features():
+    """
+    Do the above using the classes
+
+    Ideally should only take minimal arguements
+    """
+    pass
+
+
+
 class ClusterFeatureEmulator(object):
     """
     Should take a feature space as an input along with some config, a

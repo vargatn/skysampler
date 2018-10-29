@@ -63,7 +63,7 @@ def subsample(tab, nrows=1e3, rng=None, replace=False):
     nrows=np.min((len(tab), int(round(nrows))))
     allinds = np.arange(len(tab))
     inds = allinds[rng.choice(allinds, nrows, replace=replace)]
-    return tab.iloc[inds]
+    return tab.iloc[inds], inds
 
 
 class SurveyData(object):
@@ -107,6 +107,16 @@ class SurveyData(object):
         self.ipix = self.data.IPIX
         logger.critical("Read Survey data to memory")
 
+    def drop_data(self):
+        self.data = None
+        self.ra = None
+        self.dec = None
+        self.ipix = None
+        self.nrows = None
+
+    def lean_copy(self):
+        return SurveyData(self.fnames, self.nside)
+
 
 class TargetData(object):
     def __init__(self, fname):
@@ -121,8 +131,16 @@ class TargetData(object):
             File name for fits table to use
 
         """
-        _data = fio.read(fname)
-        self.data = to_pandas(_data)
+        self.fname = fname
+        _data = fio.read(self.fname)
+        self.alldata = to_pandas(_data)
+        self.data = self.alldata
+
+        self.inds = None
+        self.richness_min = None
+        self.richness_max = None
+        self.z_min = None
+        self.z_max = None
 
         try:
             self.richness = self.data.LAMBDA_CHISQ
@@ -160,6 +178,76 @@ class TargetData(object):
 
         return cls(fname)
 
+    def assign_values(self):
+
+        if self.mode == "clust":
+            self.richness = self.data.LAMBDA_CHISQ
+            self.redshift = self.data.Z_LAMBDA
+        elif self.mode == "rands":
+            self.richness = self.data.AVG_LAMBDAOUT
+            self.redshift = self.data.ZTRUE
+        else:
+            raise KeyError("Currently only clust and rands mode is supported")
+
+        self.ra = self.data.RA
+        self.dec = self.data.DEC
+        self.nrows = len(self.data)
+
+    def select_subset(self, nrows, rng=None):
+        """Restrict to subset of rows"""
+
+        self.data, self.inds = subsample(self.data, nrows, rng=rng)
+        self.assign_values()
+
+    def select_range(self, config):
+
+        self.richness_min = config["target_bins"]["richness_min"]
+        self.richness_max = config["target_bins"]["richness_max"]
+        self.z_min = config["target_bins"]["z_min"]
+        self.z_max = config["target_bins"]["z_max"]
+
+        selinds = ((self.richness > self.richness_min) &
+                   (self.richness < self.richness_max) &
+                   (self.redshift > self.z_min) &
+                   (self.redshift < self.z_max))
+
+        self.inds = np.nonzero(selinds)[0]
+        self.data = self.data.iloc[self.inds]
+        self.assign_values()
+
+    def reset_data(self):
+        self.data, self.inds = self.alldata, None
+        self.assign_values()
+
+    def to_dict(self):
+        """Copy only filename and indexes"""
+
+        res = {
+            "fname": self.fname,
+            "inds": self.inds,
+            "richness_min": self.richness_min,
+            "richness_max": self.richness_max,
+            "z_min": self.z_min,
+            "z_max": self.z_max,
+        }
+        return res
+
+    @classmethod
+    def from_dict(cls, info):
+        """recreate full object from lean copy"""
+        res = TargetData(info["fname"])
+
+        res.inds = info["inds"]
+        res.redshift_min = info["redshift_min"]
+        res.redshift_max = info["redshift_max"]
+        res.z_min = info["z_min"]
+        res.z_max = info["z_max"]
+
+        res.data = res.alldata[res]
+        res.assign_values()
+
+        return res
+
 
 class SurveyIndexer(object):
     def __init__(self, survey, target, config):
@@ -193,7 +281,7 @@ class SurveyIndexer(object):
         return self.theta_edges(eps, theta_min, theta_max,  nbins)
 
     def index(self):
-
+        """Calculates indexes and multiplicities for galaxies in radial shells"""
         numprof = np.zeros(self.nbins)
         container = [[] for tmp in np.arange(self.nbins)]
         for i in np.arange(self.target.nrow):
@@ -226,14 +314,25 @@ class SurveyIndexer(object):
             _uniqs, _counts = np.unique(np.concatenate(container[j]), return_counts=True)
             indexes.append(_uniqs)
             counts.append(_counts)
-        # TODO refine this selection
-        return numprof, indexes, counts
+
+        result = IndexedDataContainer(self.survey.lean_copy(), self.target.to_dict(), numprof, indexes, counts,
+                                      self.theta_edges, self.rcens, self.redges, self.rareas)
+
+        return result
 
 
 class IndexedDataContainer(object):
     """Container for Indexed Data"""
-    def __init__(self):
-        pass
+    def __init__(self, survey, target_dict, numprof, indexes, counts, theta_edges, rcens, redges, rareas):
+        self.survey = survey
+        self.target_dict = target_dict
+        self.numprof = numprof
+        self.indexes = indexes
+        self.counts = counts
+        self.theta_edges = theta_edges
+        self.rcens = rcens
+        self.redges = redges
+        self.rareas = rareas
 
     def query(self):
         """
@@ -242,38 +341,6 @@ class IndexedDataContainer(object):
         Ideally this also doubles as a shorthand we can use for visualizations
         """
         pass
-
-    def write(self):
-        pass
-
-    def load(self):
-        pass
-
-
-class FeatureSpaceContainer(object):
-    """
-    Container for Feature space (should be very fine histogram, to reduce memory size
-
-    We will use it for later processing, and for this reason should be completely self-standing, and not memory heavy
-    """
-    def __init__(self):
-        pass
-
-    def write(self):
-        pass
-
-    def load(self):
-        pass
-
-
-def extract_features():
-    """
-    Do the above using the classes
-
-    Ideally should only take minimal arguements
-    """
-    pass
-
 
 
 
