@@ -25,7 +25,7 @@ import healpy as hp
 import pickle
 import astropy.units as u
 
-from .utils import to_pandas
+from .utils import to_pandas, radial_bins
 from .paths import setup_logger, logfile_info, config
 
 logger = setup_logger("INDEXER", level=config["logging_level"], logfile_info=logfile_info)
@@ -79,6 +79,7 @@ class SurveyData(object):
         self.ra = None
         self.dec = None
         self.ipix = None
+        self.nrows = None
 
         logger.critical("initated SurveyData")
 
@@ -97,6 +98,7 @@ class SurveyData(object):
             data.append(fio.read(fname))
         data = np.hstack(data)
         self.data = to_pandas(data)
+        self.nrows = len(self.data)
 
         self.ra = self.data.RA
         self.dec = self.data.DEC
@@ -133,6 +135,7 @@ class TargetData(object):
 
         self.ra = self.data.RA
         self.dec = self.data.DEC
+        self.nrows = len(self.data)
 
         logger.critical("initated TargetData in " + self.mode + " mode")
 
@@ -159,62 +162,72 @@ class TargetData(object):
 
 
 class SurveyIndexer(object):
-    """
-    Do the indexing of the Data based on passed cluster DataFrame
+    def __init__(self, survey, target, config):
+        """
+        Do the indexing of the Data based on passed cluster DataFrame
 
+        What should be produced is the indexes of objects in radial shells, and their multiplicities.
+        """
+        self.survey = survey
+        self.target = target
+        self.config = config
 
-    This is mostly based on existing implementations
+        self.theta_edges, self.rcens, self.redges, self.rareas = self.get_edges(config)
+        self.nbins = len(self.theta_edges) - 1
 
-    What should be produced is the indexes of objects in radial shells, and their multiplicities.
-    """
-    def __init__(self):
-        pass
+        self.search_radius = self.config["indexer"]["search_radius"] * np.pi / 180.
+
+    @staticmethod
+    def theta_edges(eps, theta_min, theta_max, nbins):
+        """Creates logarithmically space angular bins which include +- EPS linear range around zero"""
+        rcens, redges, rareas = radial_bins(theta_min, theta_max, nbins)
+        theta_edges = np.concatenate((np.array([-eps, eps, ]), redges))
+        return theta_edges, rcens, redges, rareas
+
+    def get_edges(self, config):
+        """Construct linear-log edges from config file in ARCMIN"""
+        eps = config["indexer"]["radial_bins"]["eps"]
+        theta_min = config["indexer"]["radial_bins"]["theta_min"]
+        theta_max = config["indexer"]["radial_bins"]["theta_max"]
+        nbins = config["indexer"]["radial_bins"]["nbins"]
+        return self.theta_edges(eps, theta_min, theta_max,  nbins)
 
     def index(self):
 
-        pass
+        numprof = np.zeros(self.nbins)
+        container = [[] for tmp in np.arange(self.nbins)]
+        for i in np.arange(self.target.nrow):
+            # TODO replace this with logging
+            print(i, "/", len(self.target.nrow), end="\r")
+            trow = self.target.iloc[i]
+            tvec = hp.ang2vec(trow.RA, trow.DEC, lonlat=True)
 
-    # corrprof = np.zeros(len(redges) - 1)
-    # radius = 6. / 180. * np.pi
-    #
-    # container = [[] for tmp in np.arange(len(redges) - 1)]
-    # for i in np.arange(len(ctab)):
-    #     print(i, "/", len(ctab), end="\r")
-    #     clust = ctab.iloc[i]
-    #
-    #     # disc query pixes around cluster
-    #     cpix = hp.ang2pix(nside, clust.RA, clust.DEC, lonlat=True)
-    #     dpixes = hp.query_disc(nside, hp.pix2vec(nside, cpix), radius=radius, )
-    #
-    #     # pandas query
-    #     gals = []
-    #     for dpix in dpixes:
-    #         cmd = "IPIX == " + str(dpix)
-    #         gals.append(table.query(cmd))
-    #     gals = pd.concat(gals)
-    #
-    #     try:
-    #         zclust = clust.Z_LAMBDA
-    #     except:
-    #         zclust = clust.ZTRUE
-    #
-    #     # distances
-    #     scale = 60.
-    #     darr = np.sqrt((+ clust.RA - gals.RA) ** 2. + (clust.DEC - gals.DEC) ** 2.) * scale
-    #     gals["DIST"] = darr
-    #     corrprof += np.histogram(darr, bins=redges)[0]
-    #
-    #     for j in np.arange(len(redges) - 1):
-    #         cmd = str(redges[j]) + " < DIST < " + str(redges[j + 1])
-    #         rsub = gals.query(cmd)
-    #         container[j].append(rsub.index.values)
-    #
-    # # reformatting results
-    # indexes, counts = [], []
-    # for j in np.arange(len(redges) - 1):
-    #     _uniqs, _counts = np.unique(np.concatenate(container[j]), return_counts=True)
-    #     indexes.append(_uniqs)
-    #     counts.append(_counts)
+            dpixes = hp.query_disc(self.survey.nside, tvec, radius=self.search_radius)
+
+            # pandas query
+            gals = []
+            for dpix in dpixes:
+                cmd = "IPIX == " + str(dpix)
+                gals.append(self.survey.data.query(cmd))
+            gals = pd.concat(gals)
+
+            darr = np.sqrt((trow.RA - gals.ra) ** 2. + (trow.DEC - gals.dec) ** 2.) * 60. # converting to arcmin
+            gals["DIST"] = darr
+            numprof += np.histogram(darr, bins=self.theta_edges)[0]
+
+            for j in np.arange(self.nbins):
+                cmd = str(self.theta_edges[j]) + " < DIST < " + str(self.theta_edges[j + 1])
+                rsub = gals.query(cmd)
+                container[j].append(rsub.index.values)
+
+        # reformatting results
+        indexes, counts = [], []
+        for j in np.arange(self.nbins):
+            _uniqs, _counts = np.unique(np.concatenate(container[j]), return_counts=True)
+            indexes.append(_uniqs)
+            counts.append(_counts)
+        # TODO refine this selection
+        return numprof, indexes, counts
 
 
 class IndexedDataContainer(object):

@@ -4,6 +4,41 @@ General Utilities
 
 import numpy as np
 import pandas as pd
+import math
+
+
+def radial_bins(rmin, rmax, nbin):
+    """
+    Calculates nominal edges and centers for logarithmic radial bins(base10 logarithm)
+
+    Edges and areas are exact, "center" values are estimated as CIRCUMFERENCE weighted
+    mean radius
+
+    Parameters
+    ----------
+    rmin : float
+        inner edge
+    rmax : float
+        outer edge
+    nbin : int
+        number of bins
+
+    Returns
+    -------
+    np.array, np.array, np.array
+        centers, edges, areas
+
+    """
+    edges = np.logspace(math.log10(rmin), math.log10(rmax), nbin + 1,
+                        endpoint=True)
+    cens = np.array([(edges[i + 1] ** 3. - edges[i] ** 3.) * 2. / 3. /
+                     (edges[i + 1] ** 2. - edges[i] ** 2.)
+                     for i, edge in enumerate(edges[:-1])])
+
+    areas = np.array([np.pi * (edges[i + 1] ** 2. - edges[i] ** 2.)
+                      for i, val in enumerate(edges[:-1])])
+
+    return cens, edges, areas
 
 
 def to_pandas(recarr):
