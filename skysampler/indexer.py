@@ -10,8 +10,11 @@ import fitsio as fio
 import healpy as hp
 
 from .utils import to_pandas, radial_bins
+from .paths import setup_logger, logfile_info, config
+
 
 BADVAL = -9999.
+logger = setup_logger("INDEXER", level=config["logging_level"], logfile_info=logfile_info)
 
 
 def subsample(tab, nrows=1e3, rng=None, replace=False):
@@ -202,4 +205,37 @@ class TargetData(object):
             raise KeyError("Currently only clust and rands mode is supported")
 
         return cls(fname, mode)
+
+
+class SurveyData(object):
+    def __init__(self, fname_expr, nside):
+
+        self.fname_expr = fname_expr
+        self.nside = nside
+
+        logger.critical("initated SurveyData")
+
+    def convert_on_disk(self, suffix_in=".fits", suffix_out=".h5"):
+        "convert all survey FITS files to PANDAS"
+
+        fnames = np.sort(glob.glob(self.fname_expr + suffix_in))
+
+        for fname in fnames:
+            logger.critical("converting to pandas" + fname)
+            data = fio.read(fname)
+            data = to_pandas(data)
+            data["IPIX"] = hp.ang2pix(self.nside, data.RA, data.DEC, lonlat=True)
+            data.nside = self.nside
+            data.to_hdf(fname.replace(suffix_in, suffix_out), key="data")
+
+    def read_all_pandas(self, suffix=".h5"):
+        """Reads all DataFrames to memory"""
+        fnames = np.sort(glob.glob(self.fname_expr + suffix))
+
+        datas = []
+        for fname in fnames:
+            logger.critical("loading " + fname)
+            datas.append(pd.read_hdf(fname, key="data"))
+        self.data = pd.concat(datas, ignore_index=True)
+        self.nrows = len(self.data)
 
