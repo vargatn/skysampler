@@ -8,6 +8,9 @@ e.g. radial number profile (in absolute terms)
 
 
 
+
+
+
 class FeatureSpaceContainer(object):
     """
     Container for Feature space (should be very fine histogram, to reduce memory size
@@ -22,6 +25,8 @@ class FeatureSpaceContainer(object):
 
     def load(self):
         pass
+
+
 
 
 def extract_features():

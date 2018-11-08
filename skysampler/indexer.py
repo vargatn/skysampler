@@ -17,6 +17,18 @@ BADVAL = -9999.
 logger = setup_logger("INDEXER", level=config["logging_level"], logfile_info=logfile_info)
 
 
+def get_theta_edges(nbins, theta_min, theta_max, eps):
+    """Creates logarithmically space angular bins which include +- EPS linear range around zero"""
+    rcens, redges, rareas = radial_bins(theta_min, theta_max, nbins)
+    theta_edges = np.concatenate((np.array([-eps, eps, ]), redges))
+    return theta_edges, rcens, redges, rareas
+
+
+def shuffle(tab, rng):
+    """Returns a shuffled version of table"""
+    return subsample(tab, len(tab), rng, replace=False)
+
+
 def subsample(tab, nrows=1e3, rng=None, replace=False):
     """
     Choose rows randomly from pandas DataFrame
@@ -94,6 +106,10 @@ class TargetData(object):
                 self.richness = self.data.AVG_LAMBDAOUT
                 self.redshift = self.data.ZTRUE
                 self.mode = "rands"
+
+        self.ra = self.data.RA
+        self.dec = self.data.DEC
+        self.nrow = len(self.data)
 
     def reset_data(self):
         """Resets data to original table"""
@@ -209,7 +225,6 @@ class TargetData(object):
 
 class SurveyData(object):
     def __init__(self, fname_expr, nside):
-
         self.fname_expr = fname_expr
         self.nside = nside
 
@@ -231,7 +246,6 @@ class SurveyData(object):
     def read_all_pandas(self, suffix=".h5"):
         """Reads all DataFrames to memory"""
         fnames = np.sort(glob.glob(self.fname_expr + suffix))
-
         datas = []
         for fname in fnames:
             logger.critical("loading " + fname)
@@ -239,3 +253,99 @@ class SurveyData(object):
         self.data = pd.concat(datas, ignore_index=True)
         self.nrows = len(self.data)
 
+    def drop_data(self):
+        self.data = None
+        self.nrows = None
+
+    def lean_copy(self):
+        return SurveyData(self.fname_expr, self.nside)
+
+
+class SurveyIndexer(object):
+    def __init__(self, survey, target, search_radius=360.,
+                 nbins=50, theta_min=0.1, theta_max=100, eps=1e-3):
+        self.survey = survey
+        self.target = target
+
+        self.search_radius = search_radius
+        #self.nsamples = nsamples
+        self.set_edges(nbins, theta_min, theta_max, eps)
+
+        logger.critical("Created SurveyIndexer")
+
+    def set_edges(self, nbins=50, theta_min=0.1, theta_max=100, eps=1e-2):
+        self.nbins = nbins
+        self.theta_min = theta_min
+        self.theta_max = theta_max
+        self.eps = eps
+        self.theta_edges, self.rcens, self.redges, self.rareas = get_theta_edges(nbins, theta_min, theta_max, eps)
+
+    def index(self, verbosity=1):
+
+        self.numprof = np.zeros(self.nbins + 2)
+        self.container = [[] for tmp in np.arange(self.nbins + 2)]
+        # print("here")
+        for i in np.arange(self.target.nrow):
+            if verbosity and (i % verbosity == 0):
+                logger.critical(str(i) + "/" + str(self.target.nrow))
+
+            trow = self.target.data.iloc[i]
+            tvec = hp.ang2vec(trow.RA, trow.DEC, lonlat=True)
+
+            _radius = self.search_radius / 60. / 180. * np.pi
+            dpixes = hp.query_disc(self.survey.nside, tvec, radius=_radius)
+
+            # pandas query
+            gals = []
+            for dpix in dpixes:
+                cmd = "IPIX == " + str(dpix)
+                gals.append(self.survey.data.query(cmd))
+            gals = pd.concat(gals)
+
+            darr = np.sqrt((trow.RA - gals.RA) ** 2. + (trow.DEC - gals.DEC) ** 2.) * 60. # converting to arcmin
+            gals["DIST"] = darr
+
+            tmp = np.histogram(darr, bins=self.theta_edges)[0]
+            self.numprof += tmp
+
+            for j in np.arange(self.nbins + 2):
+                cmd = str(self.theta_edges[j]) + " < DIST < " + str(self.theta_edges[j + 1])
+                rsub = gals.query(cmd)
+                self.container[j].append(rsub.index.values)
+
+        # reformatting results
+        self.indexes, self.counts = [], []
+        for j in np.arange(self.nbins):
+            _uniqs, _counts = np.unique(np.concatenate(self.container[j]), return_counts=True)
+            self.indexes.append(_uniqs)
+            self.counts.append(_counts)
+
+        result = IndexedDataContainer(self.survey.lean_copy(), self.target.to_dict(),
+                                      self.numprof, self.indexes, self.counts,
+                                      self.theta_edges, self.rcens, self.redges, self.rareas)
+
+        return result
+
+
+class IndexedDataContainer(object):
+    """Container for Indexed Data"""
+    def __init__(self, survey, target, numprof, indexes, counts, theta_edges, rcens, redges, rareas):
+        self.survey = survey
+        self.target = target
+        self.numprof = numprof
+        self.indexes = indexes
+        self.counts = counts
+        self.theta_edges = theta_edges
+        self.rcens = rcens
+        self.redges = redges
+        self.rareas = rareas
+
+    def expand_data(self):
+        """Recover all data from disk"""
+        self.target = TargetData.from_dict(self.target)
+        self.survey.read_all()
+
+    def drop_data(self):
+        """Drops all data and keeps only necessary values"""
+        self.survey = self.survey.drop_data()
+        self.target = self.target.to_dict()
