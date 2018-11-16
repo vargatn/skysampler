@@ -29,6 +29,13 @@ def shuffle(tab, rng):
     return subsample(tab, len(tab), rng, replace=False)
 
 
+def get_ndraw(nsample, nchunk):
+    division = float(nsample) / float(nchunk)
+    arr = np.array([int(round(division * (i+1))) - int(round(division * (i)))
+                for i in range(nchunk) ])
+    return arr
+
+
 def subsample(tab, nrows=1e3, rng=None, replace=False):
     """
     Choose rows randomly from pandas DataFrame
@@ -246,6 +253,7 @@ class SurveyData(object):
     def read_all_pandas(self, suffix=".h5"):
         """Reads all DataFrames to memory"""
         fnames = np.sort(glob.glob(self.fname_expr + suffix))
+        print(fnames)
         datas = []
         for fname in fnames:
             logger.critical("loading " + fname)
@@ -327,9 +335,72 @@ class SurveyIndexer(object):
         return result
 
 
+    def draw_samples(self, nsample=1000, verbosity=1, rng=None):
+
+        if rng is None:
+            rng = np.random.RandomState()
+
+        num_to_draw = np.min((self.numprof, np.ones(self.nbins+2)*nsample), axis=0).astype(int)
+        limit_draw = num_to_draw == nsample
+        ndraws = get_ndraw(nsample, self.target.nrow)
+
+        self.sample_nrows = np.zeros(self.nbins + 2)
+        samples = [[] for tmp in np.arange(self.nbins + 2)]
+        self.samples = samples
+        for i in np.arange(self.target.nrow):
+            if verbosity and (i % verbosity == 0):
+                logger.critical(str(i) + "/" + str(self.target.nrow))
+
+            trow = self.target.data.iloc[i]
+            tvec = hp.ang2vec(trow.RA, trow.DEC, lonlat=True)
+
+            _radius = self.search_radius / 60. / 180. * np.pi
+            dpixes = hp.query_disc(self.survey.nside, tvec, radius=_radius)
+
+            # pandas query
+            gals = []
+            for dpix in dpixes:
+                cmd = "IPIX == " + str(dpix)
+                gals.append(self.survey.data.query(cmd))
+            gals = pd.concat(gals)
+
+            darr = np.sqrt((trow.RA - gals.RA) ** 2. + (trow.DEC - gals.DEC) ** 2.) * 60. # converting to arcmin
+            gals["DIST"] = darr
+
+            digits = np.digitize(darr, self.theta_edges) - 1.
+            gals["DIGIT"] = digits
+
+            for d in np.arange(self.nbins+2):
+                cmd = "DIGIT == " + str(d)
+                rows = gals.query(cmd)
+
+                # tries to draw a subsample from around each cluster in each radial range
+                if limit_draw[d]:
+                    _ndraw = get_ndraw(nsample - self.sample_nrows[d], self.target.nrow - i)[0]
+                    ndraw = np.min((_ndraw, len(rows)))
+                    self.sample_nrows[d] += ndraw
+                    if ndraw > 0:
+                        ii = rng.choice(np.arange(len(rows)), ndraw, replace=False)
+                        samples[d].append(rows.iloc[ii])
+                else:
+                    # print("  ",len(rows))
+                    self.sample_nrows[d] += len(rows)
+                    samples[d].append(rows)
+
+        for d in np.arange(self.nbins+2):
+            self.samples[d] = pd.concat(samples[d], ignore_index=True)
+
+        result = IndexedDataContainer(self.survey.lean_copy(), self.target.to_dict(),
+                                      self.numprof, self.indexes, self.counts,
+                                      self.theta_edges, self.rcens, self.redges, self.rareas,
+                                      self.samples, self.sample_nrows)
+        return result
+
+
 class IndexedDataContainer(object):
     """Container for Indexed Data"""
-    def __init__(self, survey, target, numprof, indexes, counts, theta_edges, rcens, redges, rareas):
+    def __init__(self, survey, target, numprof, indexes, counts, theta_edges, rcens, redges, rareas,
+                 samples=None, samples_nrows=None):
         self.survey = survey
         self.target = target
         self.numprof = numprof
@@ -339,6 +410,8 @@ class IndexedDataContainer(object):
         self.rcens = rcens
         self.redges = redges
         self.rareas = rareas
+        self.samples = samples
+        self.samples_nrows = samples_nrows
 
     def expand_data(self):
         """Recover all data from disk"""

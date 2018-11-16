@@ -4,6 +4,9 @@ Should containe the Gaussian Processes operations
 
 In addition to the feature spaces we should also take into account the average numbers of objects,
 e.g. radial number profile (in absolute terms)
+
+
+
 """
 
 
