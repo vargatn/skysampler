@@ -21,11 +21,16 @@ def get_theta_edges(nbins, theta_min, theta_max, eps):
     """Creates logarithmically space angular bins which include +- EPS linear range around zero"""
     rcens, redges, rareas = radial_bins(theta_min, theta_max, nbins)
     theta_edges = np.concatenate((np.array([-eps, eps, ]), redges))
+    logger.debug("theta_edges " + str(theta_edges))
+    logger.debug("rcens " + str(rcens))
+    logger.debug("redges " + str(redges))
+    logger.debug("rareas " + str(redges))
     return theta_edges, rcens, redges, rareas
 
 
 def shuffle(tab, rng):
     """Returns a shuffled version of table"""
+    logger.debug("shuffling table in place")
     return subsample(tab, len(tab), rng, replace=False)
 
 
@@ -63,6 +68,7 @@ def subsample(tab, nrows=1e3, rng=None, replace=False):
     nrows=np.min((len(tab), int(round(nrows))))
     allinds = np.arange(len(tab))
     inds = allinds[rng.choice(allinds, nrows, replace=replace)]
+    logger.debug("subsampling " + str(nrows) + " objects out of " + str(len(tab)))
     return tab.iloc[inds], inds
 
 
@@ -84,16 +90,20 @@ class TargetData(object):
         """
 
         self.fname = fname
+        logger.debug(self.fname)
         self.mode = mode
+        logger.debug(self.mode)
 
         _data = fio.read(self.fname)
         self.alldata = to_pandas(_data)
         self.data = self.alldata
+        logger.debug("data shape:" + str(self.alldata.shape))
 
         self.inds = None
         self.pars = None
         self.limits = None
         self.assign_values()
+        logger.info("initiated TargetDate in mode " + str(self.mode) + " from " + str(self.fname))
 
     def assign_values(self):
         """Tries to Guess 'mode' and exposes richness and redshift columns"""
@@ -114,19 +124,25 @@ class TargetData(object):
                 self.redshift = self.data.ZTRUE
                 self.mode = "rands"
 
+        logger.debug("z: " + str(np.array(self.redshift)))
+        logger.debug("lambda: " + str(np.array(self.richness)))
         self.ra = self.data.RA
         self.dec = self.data.DEC
         self.nrow = len(self.data)
+        logger.info("Number of targets: " + str(self.nrow))
 
     def reset_data(self):
         """Resets data to original table"""
         self.data, self.inds = self.alldata, None
         self.assign_values()
+        logger.info("resetting TargetData with filename " + str(self.fname))
 
     def draw_subset(self, nrows, rng=None):
         """draw random to subset of rows"""
         self.data, self.inds = subsample(self.data, nrows, rng=rng)
         self.assign_values()
+        logger.info("drawing " + str(nrows) + " subset from  TargetData with filename " + str(self.fname))
+
 
     def select_inds(self, inds, bool=True):
         """"
@@ -146,6 +162,7 @@ class TargetData(object):
             self.inds = inds
 
         self.data = self.alldata.iloc[self.inds]
+        logger.info("selected inds (" + str(len(self.data)) + " subset) from  TargetData with filename " + str(self.fname))
 
     def select_range(self, pars, limits):
         """
@@ -166,6 +183,9 @@ class TargetData(object):
 
         self.pars = pars
         self.limits = limits
+        logger.info("selecting subset from  TargetData with filename " + str(self.fname))
+        logger.info("pars:" + str(self.pars))
+        logger.info("limits:" + str(self.limits))
 
         bool_inds = np.ones(len(self.data), dtype=bool)
         for par, lim in zip(pars, limits):
@@ -226,7 +246,7 @@ class TargetData(object):
             fname = config["catalogs"]["targets"]["rands"]
         else:
             raise KeyError("Currently only clust and rands mode is supported")
-
+        logger.info("constructing TargetData from config file")
         return cls(fname, mode)
 
 

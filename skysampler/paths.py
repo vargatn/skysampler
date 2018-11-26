@@ -69,8 +69,9 @@ def setup_logger(tag, level, logfile_info):
     """
     tag = tag.upper()
 
-    logging.basicConfig(format="%(asctime)s %(name)s %(message)s",
+    logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s %(message)s",
                         level=preset_logging_levels[level], stream=sys.stdout)
+    # TODO add file logging here
 
     return logging.getLogger(tag)
 
@@ -104,7 +105,7 @@ if project_path is not None:
     logfile_info = assign_logfile(config)
 
     logger = setup_logger("PATHS", level=config["logging_level"], logfile_info=logfile_info)
-    logger.critical("config read from file: " + config["config_path"])
+    logger.info("config read from file: " + config["config_path"])
 
 
 
