@@ -342,7 +342,6 @@ class SurveyIndexer(object):
 
         num_to_draw = np.min((self.numprof, np.ones(self.nbins+2)*nsample), axis=0).astype(int)
         limit_draw = num_to_draw == nsample
-        ndraws = get_ndraw(nsample, self.target.nrow)
 
         self.sample_nrows = np.zeros(self.nbins + 2)
         samples = [[] for tmp in np.arange(self.nbins + 2)]
