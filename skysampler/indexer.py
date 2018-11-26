@@ -255,35 +255,37 @@ class SurveyData(object):
         self.fname_expr = fname_expr
         self.nside = nside
 
-        logger.critical("initated SurveyData")
+        logger.info("initated SurveyData with expression " + str(self.fname_expr))
 
     def convert_on_disk(self, suffix_in=".fits", suffix_out=".h5"):
         "convert all survey FITS files to PANDAS"
 
         fnames = np.sort(glob.glob(self.fname_expr + suffix_in))
-
+        logger.info("starting fits -> h5 conversion")
         for fname in fnames:
-            logger.critical("converting to pandas" + fname)
+            logger.info("converting to pandas " + fname)
             data = fio.read(fname)
             data = to_pandas(data)
             data["IPIX"] = hp.ang2pix(self.nside, data.RA, data.DEC, lonlat=True)
             data.nside = self.nside
             data.to_hdf(fname.replace(suffix_in, suffix_out), key="data")
+        logger.info("finished conversion")
 
     def read_all_pandas(self, suffix=".h5"):
         """Reads all DataFrames to memory"""
         fnames = np.sort(glob.glob(self.fname_expr + suffix))
-        print(fnames)
         datas = []
         for fname in fnames:
-            logger.critical("loading " + fname)
+            logger.info("loading " + fname)
             datas.append(pd.read_hdf(fname, key="data"))
         self.data = pd.concat(datas, ignore_index=True)
         self.nrows = len(self.data)
+        logger.info("read " + str(self.nrows) + " rows")
 
     def drop_data(self):
         self.data = None
         self.nrows = None
+        logger.info("resetting SurveyData with expression " + str(self.fname_expr))
 
     def lean_copy(self):
         return SurveyData(self.fname_expr, self.nside)
