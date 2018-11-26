@@ -298,10 +298,14 @@ class SurveyIndexer(object):
         self.target = target
 
         self.search_radius = search_radius
-        #self.nsamples = nsamples
         self.set_edges(nbins, theta_min, theta_max, eps)
+        logger.info("Created SurveyIndexer")
+        logger.debug(survey)
+        logger.debug(target)
+        logger.debug("search radius " + str(search_radius) + " arcmin")
+        logger.info("nbins: " + str(nbins))
+        logger.info("eps: " + str(eps) + " theta_min: " + str(theta_min) + " theta_max: " + str(theta_max))
 
-        logger.critical("Created SurveyIndexer")
 
     def set_edges(self, nbins=50, theta_min=0.1, theta_max=100, eps=1e-2):
         self.nbins = nbins
@@ -310,14 +314,12 @@ class SurveyIndexer(object):
         self.eps = eps
         self.theta_edges, self.rcens, self.redges, self.rareas = get_theta_edges(nbins, theta_min, theta_max, eps)
 
-    def index(self, verbosity=1):
-
+    def index(self):
+        logger.info("starting survey indexing")
         self.numprof = np.zeros(self.nbins + 2)
         self.container = [[] for tmp in np.arange(self.nbins + 2)]
-        # print("here")
         for i in np.arange(self.target.nrow):
-            if verbosity and (i % verbosity == 0):
-                logger.critical(str(i) + "/" + str(self.target.nrow))
+            logger.debug(str(i) + "/" + str(self.target.nrow))
 
             trow = self.target.data.iloc[i]
             tvec = hp.ang2vec(trow.RA, trow.DEC, lonlat=True)
@@ -325,7 +327,6 @@ class SurveyIndexer(object):
             _radius = self.search_radius / 60. / 180. * np.pi
             dpixes = hp.query_disc(self.survey.nside, tvec, radius=_radius)
 
-            # pandas query
             gals = []
             for dpix in dpixes:
                 cmd = "IPIX == " + str(dpix)
@@ -343,7 +344,6 @@ class SurveyIndexer(object):
                 rsub = gals.query(cmd)
                 self.container[j].append(rsub.index.values)
 
-        # reformatting results
         self.indexes, self.counts = [], []
         for j in np.arange(self.nbins):
             _uniqs, _counts = np.unique(np.concatenate(self.container[j]), return_counts=True)
@@ -353,12 +353,12 @@ class SurveyIndexer(object):
         result = IndexedDataContainer(self.survey.lean_copy(), self.target.to_dict(),
                                       self.numprof, self.indexes, self.counts,
                                       self.theta_edges, self.rcens, self.redges, self.rareas)
-
+        logger.info("finished survey indexing")
         return result
 
 
-    def draw_samples(self, nsample=1000, verbosity=1, rng=None):
-
+    def draw_samples(self, nsample=10000, rng=None):
+        logger.info("starting drawing random subsample with nsample=" + str(nsample))
         if rng is None:
             rng = np.random.RandomState()
 
@@ -369,8 +369,7 @@ class SurveyIndexer(object):
         samples = [[] for tmp in np.arange(self.nbins + 2)]
         self.samples = samples
         for i in np.arange(self.target.nrow):
-            if verbosity and (i % verbosity == 0):
-                logger.critical(str(i) + "/" + str(self.target.nrow))
+            logger.debug(str(i) + "/" + str(self.target.nrow))
 
             trow = self.target.data.iloc[i]
             tvec = hp.ang2vec(trow.RA, trow.DEC, lonlat=True)
@@ -415,6 +414,7 @@ class SurveyIndexer(object):
                                       self.numprof, self.indexes, self.counts,
                                       self.theta_edges, self.rcens, self.redges, self.rareas,
                                       self.samples, self.sample_nrows)
+        logger.info("finished random draws")
         return result
 
 
