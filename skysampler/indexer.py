@@ -21,6 +21,13 @@ def get_theta_edges(nbins, theta_min, theta_max, eps):
     """
     Creates logarithmically space angular bins which include +- EPS linear range around zero
 
+    The binning scheme looks the following::
+
+        theta_edges = [ -eps, eps, theta_min, ... , theta_max]
+
+    hence there are in total :code:`nbins + 2` bins.
+
+
     Parameters
     ----------
     nbins: int
@@ -34,11 +41,14 @@ def get_theta_edges(nbins, theta_min, theta_max, eps):
 
     Returns
     -------
-    theta_edges: float
-
-    rcens:
-    redges:
-    rareas:
+    theta_edges: np.array
+        radial edges
+    rcens: np.array
+        cemters of radial rings (starting at theta_min)
+    redges: np.array
+        edges of radial rings (starting at theta_min)
+    rareas: np.array
+        2D areas of radial rings (starting at theta_min)
     """
     rcens, redges, rareas = radial_bins(theta_min, theta_max, nbins)
     theta_edges = np.concatenate((np.array([-eps, eps, ]), redges))
@@ -50,19 +60,38 @@ def get_theta_edges(nbins, theta_min, theta_max, eps):
 
 
 def shuffle(tab, rng):
-    """Returns a shuffled version of table"""
+    """
+    Returns a shuffled version of the passed DataFrame
+
+    Uses :py:meth:`subsample` in the backend
+
+    Parameters
+    ----------
+    tab: pd.DataFrame
+        input table
+    rng: np.random.RandomState
+        random number generator, if None uses np.random directly
+
+    Returns
+    -------
+    pd.DataFrame
+        shuffled table
+    """
     logger.debug("shuffling table in place")
     return subsample(tab, len(tab), rng, replace=False)
 
 
 def get_ndraw(nsample, nchunk):
+    """
+    TODO
+    """
     division = float(nsample) / float(nchunk)
     arr = np.array([int(round(division * (i+1))) - int(round(division * (i)))
                 for i in range(nchunk) ])
     return arr
 
 
-def subsample(tab, nrows=1e3, rng=None, replace=False):
+def subsample(tab, nrows=1000, rng=None, replace=False):
     """
     Choose rows randomly from pandas DataFrame
 
@@ -73,7 +102,7 @@ def subsample(tab, nrows=1e3, rng=None, replace=False):
     nrows: int
         number of rows to choose, automatically capped at table length
     rng: np.random.RandomState
-        random number generator
+        random number generator, if None uses np.random directly
     replace: bool
         draw with replacement or not
 
@@ -440,9 +469,41 @@ class SurveyIndexer(object):
 
 
 class IndexedDataContainer(object):
-    """Container for Indexed Data"""
     def __init__(self, survey, target, numprof, indexes, counts, theta_edges, rcens, redges, rareas,
                  samples=None, samples_nrows=None):
+        """
+        Container for Indexed Survey Data
+
+        It serves only as a data wrapper which can be pickled easily. The bulk of the survey data or target data
+        should not be contained, and can be dropped and recovered when necessary.
+
+        All parameters are class variables with the same name.
+
+        Parameters
+        ----------
+        survey: :py:meth:`SurveyData` instance
+            Container for the survey data
+        target: :py:meth:`TargetData` instance
+            Container for the target data
+        numprof: np.array
+            number profile of objects around the targets
+        indexes: list
+            index of unique galaxies at each radial bin around targets
+        counts: list of list
+            multiplicity of unique galaxies at each radial bin around targets
+        theta_edges: np.array
+                radial edges
+        rcens: np.array
+                centers of radial rings (starting at theta_min)
+        redges: np.array
+            edges of radial rings (starting at theta_min)
+        rareas: np.array
+            2D areas of radial rings (starting at theta_min)
+        samples: list of pd.DataFrame
+            table of random galaxy draws from each radial bin (capped in size at :code:`nsamples`)
+        samples_nrows: np.array
+            number of galaxies drawn from each radial bin
+        """
         self.survey = survey
         self.target = target
         self.numprof = numprof
