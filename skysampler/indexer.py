@@ -18,7 +18,28 @@ logger = setup_logger("INDEXER", level=config["logging_level"], logfile_info=log
 
 
 def get_theta_edges(nbins, theta_min, theta_max, eps):
-    """Creates logarithmically space angular bins which include +- EPS linear range around zero"""
+    """
+    Creates logarithmically space angular bins which include +- EPS linear range around zero
+
+    Parameters
+    ----------
+    nbins: int
+        number of radial bins
+    theta_min: float
+        start of log10 spaced bins
+    theta_max: float
+        end of log10 spaced bins
+    eps: float
+        linear padding around zero
+
+    Returns
+    -------
+    theta_edges: float
+
+    rcens:
+    redges:
+    rareas:
+    """
     rcens, redges, rareas = radial_bins(theta_min, theta_max, nbins)
     theta_edges = np.concatenate((np.array([-eps, eps, ]), redges))
     logger.debug("theta_edges " + str(theta_edges))
