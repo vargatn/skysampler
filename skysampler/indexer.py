@@ -83,7 +83,20 @@ def shuffle(tab, rng):
 
 def get_ndraw(nsample, nchunk):
     """
-    TODO
+    Calculates length of each approximately equal partitions of list
+
+    Parameters
+    ----------
+    nsample: int
+        number of entries in original list
+    nchunk: int
+        number of desired chunks
+
+    Returns
+    -------
+    np.array
+        length of each partition
+
     """
     division = float(nsample) / float(nchunk)
     arr = np.array([int(round(division * (i+1))) - int(round(division * (i)))
@@ -125,11 +138,11 @@ def subsample(tab, nrows=1000, rng=None, replace=False):
 class TargetData(object):
     def __init__(self, fname, mode=None):
         """
-        Simple wrapper for unified handling of clusters and random point tables
+        Wrapper for unified handling of clusters and random point tables
 
         Exposes richness, redshift, ra, dec columns
 
-        Supports subselecting in richness and redshift
+        Supports selecting subsets of based on richness or other parameters
 
         Parameters
         ----------
@@ -156,7 +169,7 @@ class TargetData(object):
         logger.info("initiated TargetDate in mode " + str(self.mode) + " from " + str(self.fname))
 
     def assign_values(self):
-        """Tries to Guess 'mode' and exposes richness and redshift columns"""
+        """Tries to guess 'mode' and exposes richness and redshift columns"""
         if self.mode is not None:
             if self.mode == "clust":
                 self.richness = self.data.LAMBDA_CHISQ
@@ -193,9 +206,8 @@ class TargetData(object):
         self.assign_values()
         logger.info("drawing " + str(nrows) + " subset from  TargetData with filename " + str(self.fname))
 
-
     def select_inds(self, inds, bool=True):
-        """"
+        """
         Selects subset based on index
 
         Parameters
@@ -203,7 +215,7 @@ class TargetData(object):
         inds: np.array
             indexing array
         bool: bool
-            whether indexing array is bool ir integer
+            whether indexing array is bool or integer
         """
 
         if bool:
@@ -218,7 +230,8 @@ class TargetData(object):
         """
         Selects single parameter bin from underlying data table
 
-        in addition to columns, "redshift" and "richness" are also valid keys
+        In addition to columns, "redshift" and "richness" are also valid keys, these automatically refer to the
+        appropriate column
 
         Parameters
         ----------
@@ -226,7 +239,6 @@ class TargetData(object):
             Column name or list of Column names
         limits: list
             value limits for each column
-
         """
 
         self.reset_data()
@@ -302,13 +314,44 @@ class TargetData(object):
 
 class SurveyData(object):
     def __init__(self, fname_expr, nside):
+        """
+        Wrapper for survey data
+
+        In general the survey data is very large, and is distributed into several data tables.
+        Hence this is a unified frontend to hide the complexities of data access
+
+        Parameters
+        ----------
+        fname_expr: str
+            regular expression matching the paths for the survey data files
+
+        nside: int
+            healpix nside of pixels to be used with the catalog
+        """
+
         self.fname_expr = fname_expr
         self.nside = nside
 
         logger.info("initated SurveyData with expression " + str(self.fname_expr))
 
     def convert_on_disk(self, suffix_in=".fits", suffix_out=".h5"):
-        "convert all survey FITS files to PANDAS"
+        """
+        Convert all survey FITS files to PANDAS DataFrames
+
+        Pandas DataFrames stored as HDF5 files offer many practical features compared to FITS,
+        e.g. efficient I/O and data structures and handling
+
+        This operation is done file-by-file on disk.
+
+        Parameters
+        ----------
+        suffix_in: str
+            suffix of the default data files
+            default is ".fits"
+        suffix_out: str
+            suffix of the output data files
+            default is ".h5"
+        """
 
         fnames = np.sort(glob.glob(self.fname_expr + suffix_in))
         logger.info("starting fits -> h5 conversion")
@@ -322,33 +365,71 @@ class SurveyData(object):
         logger.info("finished conversion")
 
     def read_all_pandas(self, suffix=".h5"):
-        """Reads all DataFrames to memory"""
-        fnames = np.sort(glob.glob(self.fname_expr + suffix))
-        datas = []
-        for fname in fnames:
-            logger.info("loading " + fname)
-            datas.append(pd.read_hdf(fname, key="data"))
-        self.data = pd.concat(datas, ignore_index=True)
-        self.nrows = len(self.data)
-        logger.info("read " + str(self.nrows) + " rows")
+        """
+        Reads all Survey DataFrames to memory
+
+        Potentially uses very large amount of RAM, use with caution
+
+        Parameters
+        ----------
+        suffix: str
+            suffix of the survey data files
+            default is ".h5"
+        """
+        try:
+            fnames = np.sort(glob.glob(self.fname_expr + suffix))
+            datas = []
+            for fname in fnames:
+                logger.info("loading " + fname)
+                datas.append(pd.read_hdf(fname, key="data"))
+            self.data = pd.concat(datas, ignore_index=True)
+            self.nrows = len(self.data)
+            logger.info("read " + str(self.nrows) + " rows")
+        except MemoryError:
+            logger.info("Loading Failed, encountered Memory Error")
 
     def drop_data(self):
+        """Resets SurveyData table to None"""
         self.data = None
         self.nrows = None
         logger.info("resetting SurveyData with expression " + str(self.fname_expr))
 
     def lean_copy(self):
+        """Returns a low-memory version of the SurveyData"""
         return SurveyData(self.fname_expr, self.nside)
 
 
 class SurveyIndexer(object):
     def __init__(self, survey, target, search_radius=360.,
                  nbins=50, theta_min=0.1, theta_max=100, eps=1e-3):
+        """
+        Creates
+
+        Parameters
+        ----------
+        survey
+        target
+        search_radius
+        nbins: int
+            number of radial bins
+        theta_min: float
+            start of log10 spaced bins
+        theta_max: float
+            end of log10 spaced bins
+        eps: float
+            linear padding around zero
+        """
         self.survey = survey
         self.target = target
 
         self.search_radius = search_radius
-        self.set_edges(nbins, theta_min, theta_max, eps)
+
+        self.nbins = nbins
+        self.theta_min = theta_min
+        self.theta_max = theta_max
+        self.eps = eps
+        self.theta_edges, self.rcens, self.redges, self.rareas = get_theta_edges(nbins, theta_min, theta_max, eps)
+
         logger.info("Created SurveyIndexer")
         logger.debug(survey)
         logger.debug(target)
@@ -356,17 +437,16 @@ class SurveyIndexer(object):
         logger.info("nbins: " + str(nbins))
         logger.info("eps: " + str(eps) + " theta_min: " + str(theta_min) + " theta_max: " + str(theta_max))
 
-
-    def set_edges(self, nbins=50, theta_min=0.1, theta_max=100, eps=1e-2):
-        self.nbins = nbins
-        self.theta_min = theta_min
-        self.theta_max = theta_max
-        self.eps = eps
-        self.theta_edges, self.rcens, self.redges, self.rareas = get_theta_edges(nbins, theta_min, theta_max, eps)
-
     def index(self):
+        """
+
+        Returns
+        -------
+
+        """
         logger.info("starting survey indexing")
         self.numprof = np.zeros(self.nbins + 2)
+        self.numprofiles = np.zeros((self.target.nrow, self.nbins + 2))
         self.container = [[] for tmp in np.arange(self.nbins + 2)]
         for i in np.arange(self.target.nrow):
             logger.debug(str(i) + "/" + str(self.target.nrow))
@@ -388,6 +468,7 @@ class SurveyIndexer(object):
 
             tmp = np.histogram(darr, bins=self.theta_edges)[0]
             self.numprof += tmp
+            self.numprofiles[i] = tmp
 
             for j in np.arange(self.nbins + 2):
                 cmd = str(self.theta_edges[j]) + " < DIST < " + str(self.theta_edges[j + 1])
@@ -406,8 +487,18 @@ class SurveyIndexer(object):
         logger.info("finished survey indexing")
         return result
 
-
     def draw_samples(self, nsample=10000, rng=None):
+        """
+
+        Parameters
+        ----------
+        nsample
+        rng
+
+        Returns
+        -------
+
+        """
         logger.info("starting drawing random subsample with nsample=" + str(nsample))
         if rng is None:
             rng = np.random.RandomState()
@@ -427,7 +518,6 @@ class SurveyIndexer(object):
             _radius = self.search_radius / 60. / 180. * np.pi
             dpixes = hp.query_disc(self.survey.nside, tvec, radius=_radius)
 
-            # pandas query
             gals = []
             for dpix in dpixes:
                 cmd = "IPIX == " + str(dpix)

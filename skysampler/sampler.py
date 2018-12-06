@@ -11,6 +11,9 @@ class SkyCreator(object):
     This is the class which gets exposed to galsim
 
     Everything goes in here
+
+
+    Should be able
     """
     def __init__(self):
         pass

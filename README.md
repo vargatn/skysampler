@@ -12,7 +12,7 @@ The package:
 * Provides interface for [GalSim](https://github.com/GalSim-developers/GalSim) to render the mock catalogs into full survey-like exposures
 
 Generating mock observations takes place in a data driven way, i.e. clusters are constructed as they are seen in
-the survey, not according to our theoretical models for them, hence the products are not critically dependent
+the survey, not according to our theoretical models for them. Hence the products are not critically dependent
 on our physical assumptions, only on survey conditions.
 
 
