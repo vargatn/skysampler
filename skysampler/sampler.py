@@ -5,6 +5,8 @@ Galsim extension package based on LOS constructors
 
 import galsim
 import pickle
+import numpy as np
+import fitsio as fio
 
 
 class SkyCreator(object):
@@ -13,8 +15,6 @@ class SkyCreator(object):
     """
     def __init__(self):
         pass
-
-
 
 
 class SkySampler(object):
@@ -27,61 +27,59 @@ class SkySampler(object):
     Should be able
     """
     _takes_rng = True
-    _req_params = {"file_name": str, "colnames": list}
+    _req_params = {"file_name": str,}
     _opt_params = {}
     _single_params = []
-    # colnames =
-    def __init__(self, file_name, colnames, rng=None):
-        self.mock = pickle.load(open(file_name, "rb"))
-        self.colnames = list(self.mock.columns)
+    def __init__(self, file_name, rng=None):
+        self.mock = fio.read(file_name)
         self.ngal = len(self.mock)
 
     def get_row(self, index):
-        return self.mock.iloc[index]
+        return self.mock[index]
+
+    def get_nobj(self):
+        return self.ngal
+
+    def get_columns(self):
+        return self.mock.dtype.names
 
 def SkyRow(config, base, name):
-    index, index_key = galsim.config.GetIndex(config, base)
     # TODO actual catalog index is a combination of these
     # FIXME for this version we have to use 1 tile only
+    index, index_key = galsim.config.GetIndex(config, base)
     ii = index - base["start_obj_num"]
-    # tile should be choosen based on tile_num
-    # i = index - start_obj_num  of tile
+    print(ii)
 
-    # print("index_key", index_key)
-    # print(base.keys())
-    # print(base["start_obj_num"], base["tile_start_obj_num"], base["tile_start_obj_num"])
-    # print(base["index_key"], base["band_num"], base["band"], base["tile_num"])
-
-    if base.get('_sky_sampler_index',None) != ii:
+    if base.get('_sky_sampler_index', None) != ii:
         sampler = galsim.config.GetInputObj('sky_sampler', config, base, name)
 
         base['_sky_row_data'] = sampler.get_row(ii)
         base['_sky_sampler_index'] = ii
-        base['_sky_colnames'] = sampler.colnames
+        base['_sky_columns'] = sampler.get_columns()
 
-    print(ii, base['_sky_row_data']["X"], base['_sky_row_data']["Y"])
-    return base['_sky_row_data'], base['_sky_colnames']
+    return base['_sky_row_data'], base['_sky_columns']
 
 
 def SkyValue(config, base, value_type):
-    # sampler = galsim.config.GetInputObj('sky_sampler', config, base, value_type)
-    # print(sampler)
-    # print(sampler.mock)
-    # row_data, colnames = SkyRow(config, base, value_type)
-    # col = galsim.config.ParseValue(config, 'col', base, str)[0]
-    # if "FLUX" in col:
-    #     col = "FLUX_" + str(base["band"]).upper()
-    # print(col)
-    # res = float( row_data[ colnames.index(col) ] )
-    # return res
-    return 1.
+    row, colnames = SkyRow(config, base, value_type)
+    col = galsim.config.ParseValue(config, 'col', base, str)[0]
+    if "FLUX" in col:
+        col = "FLUX_" + str(base["band"]).upper()
+    icol = colnames.index(col)
+    res = float(row[icol])
+    if col == "ANGLE":
+        res *= galsim.degrees
+    return res
 
 def SkyNum(config, base, value_type):
-    fname = base["input"]["sky_sampler"]["file_name"]
-    sampler = SkySampler(fname, None)
-    # print(sampler.ngal)
-    # return sampler.ngal
-    return 10
+    print("here")
+    # print(base[])
+    val = len(fio.read(base["input"]["sky_sampler"]["file_name"]))
+    # sampler = galsim.config.GetInputObj('sky_sampler', config, base, value_type)
+    # val = sampler.get_nobj()
+    print(val)
+    return val
+
 
 galsim.config.RegisterInputType('sky_sampler', galsim.config.InputLoader(SkySampler))
 galsim.config.RegisterValueType('sky_value', SkyValue, [float], input_type='sky_sampler')
