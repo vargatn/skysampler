@@ -273,6 +273,8 @@ class TargetData(object):
             "pars": self.pars,
             "limits": self.limits,
             "mode": self.mode,
+            "nrow": self.nrow
+
         }
         return info
 
