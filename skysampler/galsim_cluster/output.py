@@ -29,16 +29,19 @@ class CatalogOutputBuilder(OutputBuilder):
         # TODO This should be super light-weight!
         # TODO sometimes this is called just stand-alon, sometimes before building a particular table
 
-        print(galsim.config.process.valid_index_keys)
-        print(galsim.config.eval_base_variables)
+
 
         print(">>>>>>>>>>>>>>>>>>")
         print("SETUP IS CALLED", file_num)
 
-        # FIXME this is a bit broken here below...
-        if 'tile_num' not in galsim.config.process.valid_index_keys:
-            galsim.config.valid_index_keys += ['tile_num', 'band_num']
-            galsim.config.eval_base_variables += ['tile_num', 'band_num', 'tile_start_obj_num', 'band']
+
+        keys = ['tile_num', 'band_num']
+        diff = set(keys).difference(set(galsim.config.process.valid_index_keys))
+        galsim.config.valid_index_keys += sorted(diff)
+
+        keys = ['tile_num', 'band_num', 'tile_start_obj_num', 'band']
+        diff = set(keys).difference(set(galsim.config.eval_base_variables))
+        galsim.config.eval_base_variables += diff
 
         if 'ntiles' in config:
             try:
@@ -143,7 +146,6 @@ class CatalogOutputBuilder(OutputBuilder):
         band_num = file_num % nbands
         base['tile_num'] = tile_num
         base['band_num'] = band_num
-        galsim.config.eval_base_variables += ["band"]
         base['band'] = config['bands'][band_num]
         print("tile_num", tile_num, "band_num", band_num)
 
@@ -172,6 +174,21 @@ class CatalogOutputBuilder(OutputBuilder):
         OutputBuilder.setup(self, config, base, file_num, logger)
 
     def getNFiles(self, config, base):
+        """
+        Returns the number of files to be built.
+
+        Parameters
+        ----------
+        config: dict
+            The configuration dict for the output field.
+        base: dict
+            The base configuration dict.
+
+        Returns
+        --------
+        int
+            the number of "files" to build.
+        """
         ntiles = galsim.config.ParseValue(config, 'ntiles', base, int)[0]
         nbands = len(config["bands"])
         config["nbands"] = nbands
