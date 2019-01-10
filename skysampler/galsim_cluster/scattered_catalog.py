@@ -28,7 +28,7 @@ import logging
 # TODO I think everything not related to this particular situation should be removed, as we won't be
 # TODO able to catch all edge cases
 
-# from galsim.config.image import ImageBuilder
+from galsim.config.image import ImageBuilder
 from galsim.config.image_scattered import ScatteredImageBuilder
 class ScatteredCatalogBuilder(ScatteredImageBuilder):
 
@@ -50,14 +50,10 @@ class ScatteredCatalogBuilder(ScatteredImageBuilder):
 
         @returns xsize, ysize
         """
-
+        # TODO check that the behaviour is not broken when called before the normal image building
         logger.debug('image %d: Building Scattered: image, obj = %d,%d',
                      image_num,image_num,obj_num)
 
-        self.sampler = galsim.config.GetInputObj('sky_sampler', config, base, 'sky_sampler')
-
-        self.tile_num = base["tile_num"]
-        self.sampler.set_tile_num(self.tile_num)
         self.nobjects = self.getNObj(config, base, image_num)
 
         logger.debug('image %d: nobj = %d',image_num,self.nobjects)
@@ -85,6 +81,12 @@ class ScatteredCatalogBuilder(ScatteredImageBuilder):
 
         return full_xsize, full_ysize
 
+    def setup_sampler(self, config, base):
+
+        # TODO add a try: except: clause here to only setup the values when they don't already exist
+        self.sampler = galsim.config.GetInputObj('sky_sampler', config, base, 'sky_sampler')
+        self.sampler.set_tile_num(base["tile_num"])
+
     def getNObj(self, config, base, image_num):
         # FIXME reformat this documentation
         """Get the number of objects that will be built for this image.
@@ -98,9 +100,12 @@ class ScatteredCatalogBuilder(ScatteredImageBuilder):
         orig_index_key = base.get('index_key',None)
         base['index_key'] = 'image_num'
         base['image_num'] = image_num
+        self.setup_sampler(config, base)
 
         nobj = self.sampler.get_nobj()
+        # print("--------------------------", nobj)
         base['index_key'] = orig_index_key
+        nobj = 10
         return nobj
 
 # Register this as a valid image type

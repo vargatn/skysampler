@@ -1,2 +1,3 @@
-from . import image_custom_scattered
+from . import scattered_catalog
 from . import sampler
+from . import output

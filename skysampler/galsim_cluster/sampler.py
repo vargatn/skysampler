@@ -65,7 +65,7 @@ class SkySampler(object):
 
     def set_tile_num(self, num):
         self.itile = num
-        self.read_mock(self.itile)
+        # self.read_mock(self.itile)
 
     def get_tile_num(self):
         return self.itile
