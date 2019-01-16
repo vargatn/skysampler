@@ -15,6 +15,10 @@ import sklearn.neighbors as neighbors
 _DEFAULT_BANDWIDTH = 0.06 # this is just an educated guess...
 
 
+def get_angle(num, rng):
+    angle = rng.uniform(0, np.pi, size=num)
+    return angle
+
 class FeatureSpaceContainer(object):
     def __init__(self, indexed_survey):
         """
@@ -105,14 +109,13 @@ class FeatureEmulator(object):
 
     def draw(self, num, expand=True, linear=True):
         """draws random samples from KDE"""
-        res = self.kde.sample(n_samples=int(num))
+        res = self.kde.sample(n_samples=int(num), random_state=self.rng)
         if expand:
             res = res * self.feature.sigma.values + self.feature.means.values
             if linear:
                 for i, log in enumerate(self.feature.logs):
                     if log:
                         res[:, i] = 10**res[:, i]
-                    # print(i)
         return res
 
 
@@ -128,10 +131,10 @@ class ConstructMock(object):
             self.rng = rng
 
     def train(self):
-        self.bcg_kde = FeatureEmulator(self.bcg_feature)
+        self.bcg_kde = FeatureEmulator(self.bcg_feature, rng=self.rng)
         self.bcg_kde.train()
 
-        self.gal_kde = FeatureEmulator(self.gal_feature)
+        self.gal_kde = FeatureEmulator(self.gal_feature, rng=self.rng)
         self.gal_kde.train()
 
     def create_table(self, mag_to_flux):
