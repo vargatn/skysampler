@@ -31,7 +31,7 @@ def extract_nobjects(config, base, ntiles):
         nobjs.append(tab.get_nrows())
     print("NOBJS:", nobjs)
     return nobjs
-    # return  [13, 17]
+
 
 class CatalogOutputBuilder(MultibandFitsBuilder):
     """

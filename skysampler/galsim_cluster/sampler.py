@@ -75,8 +75,33 @@ def sky_value(config, base, value_type):
     col = galsim.config.ParseValue(config, 'col', base, str)[0]
     if "FLUX" in col:
         col = "FLUX_" + str(base["band"]).upper()
-    icol = colnames.index(col)
-    res = float(row[icol])
+    # TODO check this
+    if col == "SHEAR_G1" or col == "SHEAR_G2":
+        res = 0.
+        shear = base["shear_settings"]["value"]
+        direction = base["shear_settings"]["direction"]
+
+        if direction == "G1" and col == "SHEAR_G1":
+            res = shear
+        elif direction == "G2" and col == "SHEAR_G2":
+            res = shear
+        elif direction == "GT":
+            phi = np.arctan2(row["Y"], row["X"])
+            if col == "SHEAR_G1":
+                res = -1. * shear * np.cos(2. * phi)
+            elif col == "SHEAR_G2":
+                res = -1. * shear * np.sin(2. * phi)
+        elif direction == "GX":
+            phi = np.arctan2(row["Y"], row["X"])
+            if col == "SHEAR_G1":
+                res = 1. * shear * np.cos(2. * phi)
+            elif col == "SHEAR_G2":
+                res = -1. * shear * np.sin(2. * phi)
+
+    else:
+        icol = colnames.index(col)
+        res = float(row[icol])
+
     return res
 
 def sky_tile_id(config, base, value_type):
