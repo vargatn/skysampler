@@ -5,7 +5,7 @@ import numpy as np
 import copy
 import fitsio as fio
 
-from deblend_pipeline.multiband_fits import MultibandFitsBuilder
+from cluster_pipeline.multiband_fits import MultibandFitsBuilder
 
 from galsim.config.output import OutputBuilder
 
@@ -29,8 +29,9 @@ def extract_nobjects(config, base, ntiles):
     for filename in mock_filenames[:ntiles]:
         tab = fio.FITS(filename)[1]
         nobjs.append(tab.get_nrows())
-    print("NOBJS:", nobjs)
+    # print("NOBJS:", nobjs)
     return nobjs
+    # return [999, 999]
 
 
 class CatalogOutputBuilder(MultibandFitsBuilder):

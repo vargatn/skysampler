@@ -8,8 +8,11 @@ import numpy as np
 import pandas as pd
 import fitsio as fio
 import healpy as hp
+import copy
+import multiprocessing as mp
+import pickle
 
-from .utils import to_pandas, radial_bins
+from .utils import to_pandas, radial_bins, partition
 from .paths import setup_logger, logfile_info, config
 
 
@@ -224,6 +227,7 @@ class TargetData(object):
             self.inds = inds
 
         self.data = self.alldata.iloc[self.inds]
+        self.nrow = len(self.data)
         logger.info("selected inds (" + str(len(self.data)) + " subset) from  TargetData with filename " + str(self.fname))
 
     def select_range(self, pars, limits):
@@ -263,6 +267,7 @@ class TargetData(object):
 
         self.inds = np.nonzero(bool_inds)
         self.data = self.alldata.iloc[self.inds]
+        self.nrow = len(self.data)
         self.assign_values()
 
     def to_dict(self):
@@ -283,11 +288,10 @@ class TargetData(object):
         """recreate full object from dictionary"""
         res = cls(info["fname"], info["mode"])
 
-        # reconstruct
-        if (info["pars"] is None) & (info["inds"] is not None):
-            res.select_inds(info["inds"], bool=False)
         if (info["pars"] is not None):
             res.select_range(info["pars"], info["limits"])
+        if (info["inds"] is not None):
+            res.select_inds(info["inds"], bool=False)
 
         return res
 
@@ -315,114 +319,102 @@ class TargetData(object):
 
 
 class SurveyData(object):
-    def __init__(self, fname_expr, nside):
-        """
-        Wrapper for survey data
-
-        In general the survey data is very large, and is distributed into several data tables.
-        Hence this is a unified frontend to hide the complexities of data access
-
-        Parameters
-        ----------
-        fname_expr: str
-            regular expression matching the paths for the survey data files
-
-        nside: int
-            healpix nside of pixels to be used with the catalog
-        """
-
-        self.fname_expr = fname_expr
+    def __init__(self, fnames, nside=16):
+        self.fnames = fnames
+        self.nchunks = len(fnames)
         self.nside = nside
 
-        logger.info("initated SurveyData with expression " + str(self.fname_expr))
-
-    def convert_on_disk(self, suffix_in=".fits", suffix_out=".h5"):
-        """
-        Convert all survey FITS files to PANDAS DataFrames
-
-        Pandas DataFrames stored as HDF5 files offer many practical features compared to FITS,
-        e.g. efficient I/O and data structures and handling
-
-        This operation is done file-by-file on disk.
-
-        Parameters
-        ----------
-        suffix_in: str
-            suffix of the default data files
-            default is ".fits"
-        suffix_out: str
-            suffix of the output data files
-            default is ".h5"
-        """
-
-        fnames = np.sort(glob.glob(self.fname_expr + suffix_in))
-        logger.info("starting fits -> h5 conversion")
-        for fname in fnames:
-            logger.info("converting to pandas " + fname)
-            data = fio.read(fname)
-            data = to_pandas(data)
-            data["IPIX"] = hp.ang2pix(self.nside, data.RA, data.DEC, lonlat=True)
-            data.nside = self.nside
-            data.to_hdf(fname.replace(suffix_in, suffix_out), key="data")
-        logger.info("finished conversion")
-
-    def read_all_pandas(self, suffix=".h5"):
-        """
-        Reads all Survey DataFrames to memory
-
-        Potentially uses very large amount of RAM, use with caution
-
-        Parameters
-        ----------
-        suffix: str
-            suffix of the survey data files
-            default is ".h5"
-        """
-        try:
-            fnames = np.sort(glob.glob(self.fname_expr + suffix))
-            datas = []
-            for fname in fnames:
-                logger.info("loading " + fname)
-                datas.append(pd.read_hdf(fname, key="data"))
-            self.data = pd.concat(datas, ignore_index=True)
-            self.nrows = len(self.data)
-            logger.info("read " + str(self.nrows) + " rows")
-        except MemoryError:
-            logger.info("Loading Failed, encountered Memory Error")
+    def get_data(self, ind):
+        fname = self.fnames[ind]
+        self.tab = pd.read_hdf(fname)
+        self.itab = ind
 
     def drop_data(self):
         """Resets SurveyData table to None"""
-        self.data = None
-        self.nrows = None
-        logger.info("resetting SurveyData with expression " + str(self.fname_expr))
+        self.tab = None
+        self.pixels = None
+        logger.info("resetting SurveyData")
 
     def lean_copy(self):
         """Returns a low-memory version of the SurveyData"""
-        return SurveyData(self.fname_expr, self.nside)
+        return SurveyData(self.fnames, self.nside)
+
+    def to_dict(self):
+        infodict = {
+            "fnames": self.fnames,
+            "nside": self.nside,
+        }
+        return infodict
+
+    @classmethod
+    def from_dict(cls, infodict):
+        return cls(**infodict)
 
 
-class SurveyIndexer(object):
-    def __init__(self, survey, target, search_radius=360.,
+
+def convert_on_disk(fnames, nprocess, nside=16):
+    nchunks = len(fnames)
+    if nprocess > nchunks:
+        nprocess = nchunks
+
+    infodicts = []
+    for fname in fnames:
+        info = {
+            "fname": fname,
+            "nside": nside,
+        }
+        infodicts.append(info)
+    info_chunks = partition(infodicts, nchunks)
+
+    pool = mp.Pool(processes=nprocess)
+    try:
+        pp = pool.map_async(_convert_chunk_run, info_chunks)
+        pp.get(86400)  # apparently this counters a bug in the exception passing in python.subprocess...
+    except KeyboardInterrupt:
+        print("Caught KeyboardInterrupt, terminating workers")
+        pool.terminate()
+        pool.join()
+    else:
+        pool.close()
+        pool.join()
+
+def _convert_chunk_run(chunks):
+    try:
+        for infodict in chunks:
+            _converter(infodict)
+    except KeyboardInterrupt:
+        pass
+
+def _converter(info):
+    fname = info["fname"]
+    nside = info["nside"]
+    print("converting",fname)
+
+    data = fio.read(fname)
+    data = to_pandas(data)
+    data["IPIX"] = hp.ang2pix(nside, data.RA, data.DEC, lonlat=True)
+    data.nside = nside
+    data.to_hdf(fname.replace("fits", "h5"), key="data")
+
+def get_simple_flags(tab):
+    flags = ((tab["MOF_CM_FLAGS"] == 0) &
+             (tab["MOF_CM_T_R"] > 0.) & (tab["MOF_CM_T_R"] < 20.) &
+             (tab["MOF_CM_MAG_CORRECTED_I"] > 15) & (tab["MOF_CM_MAG_CORRECTED_I"] < 30.) &
+             (np.abs(tab["MOF_CM_MAG_CORRECTED_G"] - tab["MOF_CM_MAG_CORRECTED_R"]) < 4.) &
+             (np.abs(tab["MOF_CM_MAG_CORRECTED_R"] - tab["MOF_CM_MAG_CORRECTED_I"]) < 4.) &
+             (np.abs(tab["MOF_CM_MAG_CORRECTED_I"] - tab["MOF_CM_MAG_CORRECTED_Z"]) < 4.) &
+             (tab["MOF_CM_T_S2N"] > 4.)
+            )
+    return flags
+
+
+class MultiIndexer(object):
+    def __init__(self, survey, target, fname_root, search_radius=360.,
                  nbins=50, theta_min=0.1, theta_max=100, eps=1e-3):
-        """
-        Creates
 
-        Parameters
-        ----------
-        survey
-        target
-        search_radius
-        nbins: int
-            number of radial bins
-        theta_min: float
-            start of log10 spaced bins
-        theta_max: float
-            end of log10 spaced bins
-        eps: float
-            linear padding around zero
-        """
         self.survey = survey
         self.target = target
+        self.fname_root = fname_root
 
         self.search_radius = search_radius
 
@@ -432,25 +424,99 @@ class SurveyIndexer(object):
         self.eps = eps
         self.theta_edges, self.rcens, self.redges, self.rareas = get_theta_edges(nbins, theta_min, theta_max, eps)
 
-        logger.info("Created SurveyIndexer")
-        logger.debug(survey)
-        logger.debug(target)
-        logger.debug("search radius " + str(search_radius) + " arcmin")
-        logger.info("nbins: " + str(nbins))
-        logger.info("eps: " + str(eps) + " theta_min: " + str(theta_min) + " theta_max: " + str(theta_max))
+    def _get_infodicts(self):
+        nchunks = self.survey.nchunks
+        infodicts = []
+        for i in np.arange(nchunks):
+            info = {
+                "ind": i,
+                "target": self.target.to_dict(),
+                "survey": self.survey.to_dict(),
+                "search_radius": self.search_radius,
+                "nbins": self.nbins,
+                "theta_edges": self.theta_edges,
+                "rcens": self.rcens,
+                "redges": self.redges,
+                "rareas": self.rareas,
+                "fname": self.fname_root + "_" + str(i) + ".p"
+            }
+            infodicts.append(info)
+        return infodicts
+
+    def run(self, nprocess=1):
+
+        infodicts = self._get_infodicts()
+
+        if nprocess > len(infodicts):
+            nprocess = len(infodicts)
+        info_chunks = partition(infodicts, nprocess)
+
+        pool = mp.Pool(processes=nprocess)
+        try:
+            pp = pool.map_async(_indexer_chunk_run, info_chunks)
+            pp.get(86400)  # apparently this counters a bug in the exception passing in python.subprocess...
+        except KeyboardInterrupt:
+            print("Caught KeyboardInterrupt, terminating workers")
+            pool.terminate()
+            pool.join()
+        else:
+            pool.close()
+            pool.join()
+
+
+def _indexer_chunk_run(chunks):
+    try:
+        for infodict in chunks:
+            print("running", infodict["fname"])
+            maker = SurveyIndexer(**infodict.copy())
+            maker.run(infodict["fname"])
+    except KeyboardInterrupt:
+        pass
+
+
+class SurveyIndexer(object):
+    def __init__(self, survey, target, theta_edges, rcens, redges, rareas, search_radius=360., nbins=50, ind=0, **kwargs):
+
+        if isinstance(survey, dict):
+            self.survey = SurveyData.from_dict(survey)
+        else:
+            self.survey = survey
+
+        if isinstance(target, dict):
+            self.target = TargetData.from_dict(target)
+        else:
+            self.target = target
+
+        self.search_radius = search_radius
+
+        self.nbins = nbins
+        self.theta_edges = theta_edges
+        self.rcens = rcens
+        self.redges = redges
+        self.rareas = rareas
+        self.ind = ind
+
+        self._get_data()
+
+    def _get_data(self):
+        self.survey.get_data(self.ind)
+        flags = get_simple_flags(self.survey.tab)
+        self.survey.tab = self.survey.tab[flags]
+
+    def run(self, fname="test"):
+        self.index()
+        result = self.draw_samples()
+        pickle.dump(result, open(fname, "wb"))
 
     def index(self):
-        """
 
-        Returns
-        -------
-
-        """
         logger.info("starting survey indexing")
         self.numprof = np.zeros(self.nbins + 2)
         self.numprofiles = np.zeros((self.target.nrow, self.nbins + 2))
         self.container = [[] for tmp in np.arange(self.nbins + 2)]
+        print("indexing samples")
         for i in np.arange(self.target.nrow):
+            print(i)
             logger.debug(str(i) + "/" + str(self.target.nrow))
 
             trow = self.target.data.iloc[i]
@@ -462,7 +528,7 @@ class SurveyIndexer(object):
             gals = []
             for dpix in dpixes:
                 cmd = "IPIX == " + str(dpix)
-                gals.append(self.survey.data.query(cmd))
+                gals.append(self.survey.tab.query(cmd))
             gals = pd.concat(gals)
 
             darr = np.sqrt((trow.RA - gals.RA) ** 2. + (trow.DEC - gals.DEC) ** 2.) * 60. # converting to arcmin
@@ -490,28 +556,19 @@ class SurveyIndexer(object):
         return result
 
     def draw_samples(self, nsample=10000, rng=None):
-        """
-
-        Parameters
-        ----------
-        nsample
-        rng
-
-        Returns
-        -------
-
-        """
         logger.info("starting drawing random subsample with nsample=" + str(nsample))
         if rng is None:
             rng = np.random.RandomState()
 
-        num_to_draw = np.min((self.numprof, np.ones(self.nbins+2)*nsample), axis=0).astype(int)
+        num_to_draw = np.min((self.numprof, np.ones(self.nbins + 2) * nsample), axis=0).astype(int)
         limit_draw = num_to_draw == nsample
 
         self.sample_nrows = np.zeros(self.nbins + 2)
         samples = [[] for tmp in np.arange(self.nbins + 2)]
         self.samples = samples
+        print("drawing samples")
         for i in np.arange(self.target.nrow):
+            print(i)
             logger.debug(str(i) + "/" + str(self.target.nrow))
 
             trow = self.target.data.iloc[i]
@@ -523,16 +580,16 @@ class SurveyIndexer(object):
             gals = []
             for dpix in dpixes:
                 cmd = "IPIX == " + str(dpix)
-                gals.append(self.survey.data.query(cmd))
+                gals.append(self.survey.tab.query(cmd))
             gals = pd.concat(gals)
 
-            darr = np.sqrt((trow.RA - gals.RA) ** 2. + (trow.DEC - gals.DEC) ** 2.) * 60. # converting to arcmin
+            darr = np.sqrt((trow.RA - gals.RA) ** 2. + (trow.DEC - gals.DEC) ** 2.) * 60.  # converting to arcmin
             gals["DIST"] = darr
 
             digits = np.digitize(darr, self.theta_edges) - 1.
             gals["DIGIT"] = digits
 
-            for d in np.arange(self.nbins+2):
+            for d in np.arange(self.nbins + 2):
                 cmd = "DIGIT == " + str(d)
                 rows = gals.query(cmd)
 
@@ -549,7 +606,7 @@ class SurveyIndexer(object):
                     self.sample_nrows[d] += len(rows)
                     samples[d].append(rows)
 
-        for d in np.arange(self.nbins+2):
+        for d in np.arange(self.nbins + 2):
             self.samples[d] = pd.concat(samples[d], ignore_index=True)
 
         result = IndexedDataContainer(self.survey.lean_copy(), self.target.to_dict(),
@@ -558,6 +615,165 @@ class SurveyIndexer(object):
                                       self.samples, self.sample_nrows)
         logger.info("finished random draws")
         return result
+
+    #
+# class SurveyIndexer(object):
+#     def __init__(self, survey, target, search_radius=360.,
+#                  nbins=50, theta_min=0.1, theta_max=100, eps=1e-3):
+#         """
+#         Creates
+#
+#         Parameters
+#         ----------
+#         survey
+#         target
+#         search_radius
+#         nbins: int
+#             number of radial bins
+#         theta_min: float
+#             start of log10 spaced bins
+#         theta_max: float
+#             end of log10 spaced bins
+#         eps: float
+#             linear padding around zero
+#         """
+#         self.survey = survey
+#         self.target = target
+#
+#         self.search_radius = search_radius
+#
+#         self.nbins = nbins
+#         self.theta_min = theta_min
+#         self.theta_max = theta_max
+#         self.eps = eps
+#         self.theta_edges, self.rcens, self.redges, self.rareas = get_theta_edges(nbins, theta_min, theta_max, eps)
+#
+#         logger.info("Created SurveyIndexer")
+#         logger.debug(survey)
+#         logger.debug(target)
+#         logger.debug("search radius " + str(search_radius) + " arcmin")
+#         logger.info("nbins: " + str(nbins))
+#         logger.info("eps: " + str(eps) + " theta_min: " + str(theta_min) + " theta_max: " + str(theta_max))
+#
+#     def index(self):
+#         """
+#
+#         Returns
+#         -------
+#
+#         """
+#         logger.info("starting survey indexing")
+#         self.numprof = np.zeros(self.nbins + 2)
+#         self.numprofiles = np.zeros((self.target.nrow, self.nbins + 2))
+#         self.container = [[] for tmp in np.arange(self.nbins + 2)]
+#         for i in np.arange(self.target.nrow):
+#             logger.debug(str(i) + "/" + str(self.target.nrow))
+#
+#             trow = self.target.data.iloc[i]
+#             tvec = hp.ang2vec(trow.RA, trow.DEC, lonlat=True)
+#
+#             _radius = self.search_radius / 60. / 180. * np.pi
+#             dpixes = hp.query_disc(self.survey.nside, tvec, radius=_radius)
+#
+#             gals = []
+#             for dpix in dpixes:
+#                 cmd = "IPIX == " + str(dpix)
+#                 gals.append(self.survey.data.query(cmd))
+#             gals = pd.concat(gals)
+#
+#             darr = np.sqrt((trow.RA - gals.RA) ** 2. + (trow.DEC - gals.DEC) ** 2.) * 60. # converting to arcmin
+#             gals["DIST"] = darr
+#
+#             tmp = np.histogram(darr, bins=self.theta_edges)[0]
+#             self.numprof += tmp
+#             self.numprofiles[i] = tmp
+#
+#             for j in np.arange(self.nbins + 2):
+#                 cmd = str(self.theta_edges[j]) + " < DIST < " + str(self.theta_edges[j + 1])
+#                 rsub = gals.query(cmd)
+#                 self.container[j].append(rsub.index.values)
+#
+#         self.indexes, self.counts = [], []
+#         for j in np.arange(self.nbins):
+#             _uniqs, _counts = np.unique(np.concatenate(self.container[j]), return_counts=True)
+#             self.indexes.append(_uniqs)
+#             self.counts.append(_counts)
+#
+#         result = IndexedDataContainer(self.survey.lean_copy(), self.target.to_dict(),
+#                                       self.numprof, self.indexes, self.counts,
+#                                       self.theta_edges, self.rcens, self.redges, self.rareas)
+#         logger.info("finished survey indexing")
+#         return result
+
+    # def draw_samples(self, nsample=10000, rng=None):
+    #     """
+    #
+    #     Parameters
+    #     ----------
+    #     nsample
+    #     rng
+    #
+    #     Returns
+    #     -------
+    #
+    #     """
+    #     logger.info("starting drawing random subsample with nsample=" + str(nsample))
+    #     if rng is None:
+    #         rng = np.random.RandomState()
+    #
+    #     num_to_draw = np.min((self.numprof, np.ones(self.nbins+2)*nsample), axis=0).astype(int)
+    #     limit_draw = num_to_draw == nsample
+    #
+    #     self.sample_nrows = np.zeros(self.nbins + 2)
+    #     samples = [[] for tmp in np.arange(self.nbins + 2)]
+    #     self.samples = samples
+    #     for i in np.arange(self.target.nrow):
+    #         logger.debug(str(i) + "/" + str(self.target.nrow))
+    #
+    #         trow = self.target.data.iloc[i]
+    #         tvec = hp.ang2vec(trow.RA, trow.DEC, lonlat=True)
+    #
+    #         _radius = self.search_radius / 60. / 180. * np.pi
+    #         dpixes = hp.query_disc(self.survey.nside, tvec, radius=_radius)
+    #
+    #         gals = []
+    #         for dpix in dpixes:
+    #             cmd = "IPIX == " + str(dpix)
+    #             gals.append(self.survey.data.query(cmd))
+    #         gals = pd.concat(gals)
+    #
+    #         darr = np.sqrt((trow.RA - gals.RA) ** 2. + (trow.DEC - gals.DEC) ** 2.) * 60. # converting to arcmin
+    #         gals["DIST"] = darr
+    #
+    #         digits = np.digitize(darr, self.theta_edges) - 1.
+    #         gals["DIGIT"] = digits
+    #
+    #         for d in np.arange(self.nbins+2):
+    #             cmd = "DIGIT == " + str(d)
+    #             rows = gals.query(cmd)
+    #
+    #             # tries to draw a subsample from around each cluster in each radial range
+    #             if limit_draw[d]:
+    #                 _ndraw = get_ndraw(nsample - self.sample_nrows[d], self.target.nrow - i)[0]
+    #                 ndraw = np.min((_ndraw, len(rows)))
+    #                 self.sample_nrows[d] += ndraw
+    #                 if ndraw > 0:
+    #                     ii = rng.choice(np.arange(len(rows)), ndraw, replace=False)
+    #                     samples[d].append(rows.iloc[ii])
+    #             else:
+    #                 # print("  ",len(rows))
+    #                 self.sample_nrows[d] += len(rows)
+    #                 samples[d].append(rows)
+    #
+    #     for d in np.arange(self.nbins+2):
+    #         self.samples[d] = pd.concat(samples[d], ignore_index=True)
+    #
+    #     result = IndexedDataContainer(self.survey.lean_copy(), self.target.to_dict(),
+    #                                   self.numprof, self.indexes, self.counts,
+    #                                   self.theta_edges, self.rcens, self.redges, self.rareas,
+    #                                   self.samples, self.sample_nrows)
+    #     logger.info("finished random draws")
+    #     return result
 
 
 class IndexedDataContainer(object):
@@ -617,3 +833,7 @@ class IndexedDataContainer(object):
         """Drops all data and keeps only necessary values"""
         self.survey = self.survey.drop_data()
         self.target = self.target.to_dict()
+
+
+def MultiDataLoader():
+    pass
