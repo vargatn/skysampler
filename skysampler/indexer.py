@@ -17,6 +17,16 @@ from .paths import setup_logger, logfile_info, config
 
 
 BADVAL = -9999.
+DEFAULT_FLAGS = [
+    ("MOF_CM_FLAGS", "==", 0),
+    ("MOF_CM_T_R", "in", (0., 20)),
+    ("MOF_CM_MAG_CORRECTED_I", "in", (15, 30)),
+    (("MOF_CM_MAG_CORRECTED_G", "-", "MOF_CM_MAG_CORRECTED_R"), "in", (-4, 4)),
+    (("MOF_CM_MAG_CORRECTED_R", "-", "MOF_CM_MAG_CORRECTED_I"), "in", (-4, 4)),
+    (("MOF_CM_MAG_CORRECTED_I", "-", "MOF_CM_MAG_CORRECTED_Z"), "in", (-4, 4)),
+    ("MOF_CM_T_S2N", ">", 4.)
+]
+
 logger = setup_logger("INDEXER", level=config["logging_level"], logfile_info=logfile_info)
 
 
@@ -351,7 +361,6 @@ class SurveyData(object):
         return cls(**infodict)
 
 
-
 def convert_on_disk(fnames, nprocess, nside=16):
     nchunks = len(fnames)
     if nprocess > nchunks:
@@ -396,15 +405,39 @@ def _converter(info):
     data.nside = nside
     data.to_hdf(fname.replace("fits", "h5"), key="data")
 
-def get_simple_flags(tab):
-    flags = ((tab["MOF_CM_FLAGS"] == 0) &
-             (tab["MOF_CM_T_R"] > 0.) & (tab["MOF_CM_T_R"] < 20.) &
-             (tab["MOF_CM_MAG_CORRECTED_I"] > 15) & (tab["MOF_CM_MAG_CORRECTED_I"] < 30.) &
-             (np.abs(tab["MOF_CM_MAG_CORRECTED_G"] - tab["MOF_CM_MAG_CORRECTED_R"]) < 4.) &
-             (np.abs(tab["MOF_CM_MAG_CORRECTED_R"] - tab["MOF_CM_MAG_CORRECTED_I"]) < 4.) &
-             (np.abs(tab["MOF_CM_MAG_CORRECTED_I"] - tab["MOF_CM_MAG_CORRECTED_Z"]) < 4.) &
-             (tab["MOF_CM_T_S2N"] > 4.)
-            )
+
+def get_flags(tab, cutlist):
+    flags = np.ones(len(tab), dtype=bool)
+    for sel in cutlist:
+        # calculate input column
+        if isinstance(sel[0], str):
+            col = tab[sel[0]]
+        else:
+            if sel[0][1] == "+":
+                col = tab[sel[0][0]] + tab[sel[0][2]]
+            elif sel[0][1] == "-":
+                col = tab[sel[0][0]] - tab[sel[0][2]]
+            elif sel[0][1] == "*":
+                col = tab[sel[0][0]] * tab[sel[0][2]]
+            elif sel[0][1] == "/":
+                col = tab[sel[0][0]] / tab[sel[0][2]]
+            else:
+                raise KeyError
+
+        # applying cut
+        if sel[1] == "==":
+            vals = (col == sel[2])
+        elif sel[1] == ">":
+            vals = (col > sel[2])
+        elif sel[1] == "<":
+            vals = (col < sel[2])
+        elif sel[1] == "in":
+            vals = (col >= sel[2][0]) & (col < sel[2][1])
+        else:
+            raise KeyError
+
+        flags &= vals
+
     return flags
 
 
@@ -616,169 +649,10 @@ class SurveyIndexer(object):
         logger.info("finished random draws")
         return result
 
-    #
-# class SurveyIndexer(object):
-#     def __init__(self, survey, target, search_radius=360.,
-#                  nbins=50, theta_min=0.1, theta_max=100, eps=1e-3):
-#         """
-#         Creates
-#
-#         Parameters
-#         ----------
-#         survey
-#         target
-#         search_radius
-#         nbins: int
-#             number of radial bins
-#         theta_min: float
-#             start of log10 spaced bins
-#         theta_max: float
-#             end of log10 spaced bins
-#         eps: float
-#             linear padding around zero
-#         """
-#         self.survey = survey
-#         self.target = target
-#
-#         self.search_radius = search_radius
-#
-#         self.nbins = nbins
-#         self.theta_min = theta_min
-#         self.theta_max = theta_max
-#         self.eps = eps
-#         self.theta_edges, self.rcens, self.redges, self.rareas = get_theta_edges(nbins, theta_min, theta_max, eps)
-#
-#         logger.info("Created SurveyIndexer")
-#         logger.debug(survey)
-#         logger.debug(target)
-#         logger.debug("search radius " + str(search_radius) + " arcmin")
-#         logger.info("nbins: " + str(nbins))
-#         logger.info("eps: " + str(eps) + " theta_min: " + str(theta_min) + " theta_max: " + str(theta_max))
-#
-#     def index(self):
-#         """
-#
-#         Returns
-#         -------
-#
-#         """
-#         logger.info("starting survey indexing")
-#         self.numprof = np.zeros(self.nbins + 2)
-#         self.numprofiles = np.zeros((self.target.nrow, self.nbins + 2))
-#         self.container = [[] for tmp in np.arange(self.nbins + 2)]
-#         for i in np.arange(self.target.nrow):
-#             logger.debug(str(i) + "/" + str(self.target.nrow))
-#
-#             trow = self.target.data.iloc[i]
-#             tvec = hp.ang2vec(trow.RA, trow.DEC, lonlat=True)
-#
-#             _radius = self.search_radius / 60. / 180. * np.pi
-#             dpixes = hp.query_disc(self.survey.nside, tvec, radius=_radius)
-#
-#             gals = []
-#             for dpix in dpixes:
-#                 cmd = "IPIX == " + str(dpix)
-#                 gals.append(self.survey.data.query(cmd))
-#             gals = pd.concat(gals)
-#
-#             darr = np.sqrt((trow.RA - gals.RA) ** 2. + (trow.DEC - gals.DEC) ** 2.) * 60. # converting to arcmin
-#             gals["DIST"] = darr
-#
-#             tmp = np.histogram(darr, bins=self.theta_edges)[0]
-#             self.numprof += tmp
-#             self.numprofiles[i] = tmp
-#
-#             for j in np.arange(self.nbins + 2):
-#                 cmd = str(self.theta_edges[j]) + " < DIST < " + str(self.theta_edges[j + 1])
-#                 rsub = gals.query(cmd)
-#                 self.container[j].append(rsub.index.values)
-#
-#         self.indexes, self.counts = [], []
-#         for j in np.arange(self.nbins):
-#             _uniqs, _counts = np.unique(np.concatenate(self.container[j]), return_counts=True)
-#             self.indexes.append(_uniqs)
-#             self.counts.append(_counts)
-#
-#         result = IndexedDataContainer(self.survey.lean_copy(), self.target.to_dict(),
-#                                       self.numprof, self.indexes, self.counts,
-#                                       self.theta_edges, self.rcens, self.redges, self.rareas)
-#         logger.info("finished survey indexing")
-#         return result
-
-    # def draw_samples(self, nsample=10000, rng=None):
-    #     """
-    #
-    #     Parameters
-    #     ----------
-    #     nsample
-    #     rng
-    #
-    #     Returns
-    #     -------
-    #
-    #     """
-    #     logger.info("starting drawing random subsample with nsample=" + str(nsample))
-    #     if rng is None:
-    #         rng = np.random.RandomState()
-    #
-    #     num_to_draw = np.min((self.numprof, np.ones(self.nbins+2)*nsample), axis=0).astype(int)
-    #     limit_draw = num_to_draw == nsample
-    #
-    #     self.sample_nrows = np.zeros(self.nbins + 2)
-    #     samples = [[] for tmp in np.arange(self.nbins + 2)]
-    #     self.samples = samples
-    #     for i in np.arange(self.target.nrow):
-    #         logger.debug(str(i) + "/" + str(self.target.nrow))
-    #
-    #         trow = self.target.data.iloc[i]
-    #         tvec = hp.ang2vec(trow.RA, trow.DEC, lonlat=True)
-    #
-    #         _radius = self.search_radius / 60. / 180. * np.pi
-    #         dpixes = hp.query_disc(self.survey.nside, tvec, radius=_radius)
-    #
-    #         gals = []
-    #         for dpix in dpixes:
-    #             cmd = "IPIX == " + str(dpix)
-    #             gals.append(self.survey.data.query(cmd))
-    #         gals = pd.concat(gals)
-    #
-    #         darr = np.sqrt((trow.RA - gals.RA) ** 2. + (trow.DEC - gals.DEC) ** 2.) * 60. # converting to arcmin
-    #         gals["DIST"] = darr
-    #
-    #         digits = np.digitize(darr, self.theta_edges) - 1.
-    #         gals["DIGIT"] = digits
-    #
-    #         for d in np.arange(self.nbins+2):
-    #             cmd = "DIGIT == " + str(d)
-    #             rows = gals.query(cmd)
-    #
-    #             # tries to draw a subsample from around each cluster in each radial range
-    #             if limit_draw[d]:
-    #                 _ndraw = get_ndraw(nsample - self.sample_nrows[d], self.target.nrow - i)[0]
-    #                 ndraw = np.min((_ndraw, len(rows)))
-    #                 self.sample_nrows[d] += ndraw
-    #                 if ndraw > 0:
-    #                     ii = rng.choice(np.arange(len(rows)), ndraw, replace=False)
-    #                     samples[d].append(rows.iloc[ii])
-    #             else:
-    #                 # print("  ",len(rows))
-    #                 self.sample_nrows[d] += len(rows)
-    #                 samples[d].append(rows)
-    #
-    #     for d in np.arange(self.nbins+2):
-    #         self.samples[d] = pd.concat(samples[d], ignore_index=True)
-    #
-    #     result = IndexedDataContainer(self.survey.lean_copy(), self.target.to_dict(),
-    #                                   self.numprof, self.indexes, self.counts,
-    #                                   self.theta_edges, self.rcens, self.redges, self.rareas,
-    #                                   self.samples, self.sample_nrows)
-    #     logger.info("finished random draws")
-    #     return result
-
 
 class IndexedDataContainer(object):
-    def __init__(self, survey, target, numprof, indexes, counts, theta_edges, rcens, redges, rareas,
-                 samples=None, samples_nrows=None):
+    def __init__(self, survey, target, numprof=None, indexes=None, counts=None, theta_edges=None, rcens=None,
+                 redges=None, rareas=None, samples=None, samples_nrows=None):
         """
         Container for Indexed Survey Data
 
@@ -827,7 +701,7 @@ class IndexedDataContainer(object):
     def expand_data(self):
         """Recover all data from disk"""
         self.target = TargetData.from_dict(self.target)
-        self.survey.read_all()
+        # self.survey.read_all()
 
     def drop_data(self):
         """Drops all data and keeps only necessary values"""
@@ -835,5 +709,53 @@ class IndexedDataContainer(object):
         self.target = self.target.to_dict()
 
 
-def MultiDataLoader():
-    pass
+class MultiDataLoader(object):
+    def __init__(self, fnames):
+        self.fnames = fnames
+
+        self._get_info()
+
+    def _get_info(self):
+        pp = pickle.load(open(self.fnames[0], "rb"))
+
+        self.rcens = pp.rcens.copy()
+        self.redges = pp.rcens.copy()
+        self.rareas = pp.rcens.copy()
+        self.target_nrow = pp.target["nrow"]
+        self.nrbins = len(pp.numprof)
+
+        self.target = TargetData.from_dict(pp.target)
+        self.survey = pp.survey
+
+    def collate_samples(self):
+        _samples = [[] for tmp in np.arange(self.nrbins)]
+        self.numprof = np.zeros(self.nrbins)
+        pps = []
+        for i, fname in enumerate(self.fnames):
+            print(fname)
+            pp = pickle.load(open(fname, "rb"))
+            pps.append(pp)
+
+            self.numprof += pp.numprof
+            for j in np.arange(self.nrbins):
+                if len(pp.samples[j]):
+                    _samples[j].append(pp.samples[j])
+
+        self.samples = [[] for tmp in np.arange(self.nrbins)]
+        for j in np.arange(self.nrbins):
+            print(j)
+            if len(_samples[j]):
+                self.samples[j] = pd.concat(_samples[j]).reset_index(drop=True)
+                self.samples[j]["WEIGHT"] = self.numprof[j] / len(self.samples[j])
+
+    def to_cont(self):
+        cont = IndexedDataContainer(self.survey, self.target, numprof=self.numprof,
+                                    rcens=self.rcens, redges=self.redges, rareas=self.rareas, samples=self.samples)
+        return cont
+
+
+
+
+
+
+
