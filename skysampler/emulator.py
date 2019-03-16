@@ -11,6 +11,12 @@ e.g. radial number profile (in absolute terms)
 import numpy as np
 import pandas as pd
 import sklearn.neighbors as neighbors
+import matplotlib as mpl
+try:
+    import matplotlib.pyplot as plt
+except:
+    mpl.use("Agg")
+    import matplotlib.pyplot as plt
 
 
 def get_angle(num, rng):
@@ -99,6 +105,25 @@ class FeatureSpaceContainer(object):
             arr = self.features.values[:, icol]
         vals = np.histogram(arr, bins=self.redges, weights=self.weights)[0] / self.nobj / self.rareas * scaler
         return vals
+
+
+class DualContainer(object):
+    """Contains features in normal and in transformed space"""
+
+    def __init__(self):
+        pass
+
+    def transofrom(self):
+        pass
+
+    def inverse_transform(self):
+        pass
+
+
+    @classmethod
+    def from_fsc(cls, fsc):
+        pass
+
 
 def _add(a, b):
     return a + b
@@ -309,9 +334,33 @@ class MultiEyeballer(object):
 
 # This is just a standard function
 class FeatureEmulator(object):
-    def __init__(self):
+    def __init__(self, fsc, rng=None):
         """This is just the packaged version of the KDE"""
-        pass
+        self.fsc = fsc
+        self.kde = None
+
+        if rng is None:
+            self.rng = np.random.RandomState()
+        else:
+            self.rng = rng
+
+    def train(self, bandwidth=0.2):
+            """train the emulator"""
+            self.bandwidth = bandwidth
+            self.kde = neighbors.KernelDensity(bandwidth=self.bandwidth)
+            self.kde.fit(self.fsc.xarr, sample_weight=self.fsc.weights)
+
+    def draw(self, num, expand=True, linear=True):
+        """draws random samples from KDE"""
+        res = self.kde.sample(n_samples=int(num), random_state=self.rng)
+        if expand:
+            res = self.fsc.inverse_rescale(res)
+            if linear:
+                for i, log in enumerate(self.fsc.logs):
+                    if log:
+                        res[:, i] = 10**res[:, i]
+
+        return res
 
     def cross_validate(self):
         pass
@@ -335,115 +384,6 @@ class PowerKDE(object): # FIXME this should be inherited from a sklearn class
 
 
 
-
-#
-
-#
-# _DEFAULT_BANDWIDTH = 0.06 # this is just an educated guess...
-#
-#
-
-#
-# class FeatureSpaceContainer(object):
-#     def __init__(self, indexed_survey):
-#         """
-#         Container for Feature space (should be very fine histogram, to reduce memory size
-#
-#         We will use it for later processing, and for this reason should be completely self-standing, and not memory heavy
-#
-#         Parameters
-#         ----------
-#         indexed_survey
-#         """
-#         self.indexed_survey = indexed_survey
-#         self.samples = indexed_survey.samples
-#
-#         self.get_weights()
-#         self.alldata = pd.concat(self.samples)
-#         self.weights = self.alldata["WEIGHT"]
-#
-#         self.nobj = len(self.indexed_survey.target["inds"][0])
-#
-#     def get_weights(self):
-#         self.rbin_weights = self.indexed_survey.numprof / self.indexed_survey.samples_nrows
-#         for d in np.arange(len(self.indexed_survey.rcens) + 2):
-#             self.samples[d]["WEIGHT"] = self.rbin_weights[d]
-#
-#     def construct_features(self, columns, limits=None, logs=None):
-#         self.columns = columns
-#         self.limits = limits
-#         self.logs = logs
-#         self.features = pd.DataFrame()
-#         self.inds = np.ones(len(self.alldata), dtype=bool)
-#         for i, col in enumerate(columns):
-#             if isinstance(col[1], str):
-#                 self.features[col[0]] = self.alldata[col[1]]
-#             else:
-#                 if col[1][2] == "-":
-#                     self.features[col[0]] = self.alldata[col[1][0]] - self.alldata[col[1][1]]
-#                 elif col[1][2] == "+":
-#                     self.features[col[0]] = self.alldata[col[1][0]] + self.alldata[col[1][1]]
-#                 elif col[1][2] == "*":
-#                     self.features[col[0]] = self.alldata[col[1][0]] * self.alldata[col[1][1]]
-#                 elif col[1][2] == "/":
-#                     self.features[col[0]] = self.alldata[col[1][0]] / self.alldata[col[1][1]]
-#                 else:
-#                     raise KeyError("only + - * / are supported at the moment")
-#
-#             if limits is not None:
-#                 self.inds &= (self.features[col[0]] > limits[i][0]) & (self.features[col[0]] < limits[i][1])
-#
-#         self.features = self.features[self.inds]
-#         self.weights = self.alldata["WEIGHT"][self.inds]
-#
-#         for i, col in enumerate(columns):
-#             if logs is not None and logs[i]:
-#               self.features[col[0]] = np.log10(self.features[col[0]])
-#
-#         self._rescale()
-#         self.outer_radial_profile()
-#
-    # def _rescale(self):
-    #     self.means = self.features.mean(axis=0)
-    #     self.sigma = self.features.std(axis=0)
-    #     self.xarr = ((self.features - self.means) / self.sigma).values
-#
-#     def outer_radial_profile(self, scaler=10):
-#         """Calculates radial mean number profile around targets (only for the log-range part)"""
-#         self.dens_profile = self.indexed_survey.numprof[2:] / self.indexed_survey.rareas / self.nobj * scaler
-#         self.dens_err = np.sqrt(self.indexed_survey.numprof[2:]) / self.indexed_survey.rareas / self.nobj * scaler
-#         self.abs_profile = self.indexed_survey.numprof[2:] / self.nobj * scaler
-#
-#
-# class FeatureEmulator(object):
-#     def __init__(self, feature, rng=None):
-#         """Emulator for feature space"""
-#         self.feature = feature
-#         self.kde = None
-#
-#         if rng is None:
-#             self.rng = np.random.RandomState()
-#         else:
-#             self.rng = rng
-#
-#     def train(self, bandwidth=_DEFAULT_BANDWIDTH):
-#         """train the emulator"""
-#         self.bandwidth = bandwidth
-#         self.kde = neighbors.KernelDensity(bandwidth=self.bandwidth)
-#         self.kde.fit(self.feature.xarr, sample_weight=self.feature.weights)
-#
-#     def draw(self, num, expand=True, linear=True):
-#         """draws random samples from KDE"""
-#         res = self.kde.sample(n_samples=int(num), random_state=self.rng)
-#         if expand:
-#             res = res * self.feature.sigma.values + self.feature.means.values
-#             if linear:
-#                 for i, log in enumerate(self.feature.logs):
-#                     if log:
-#                         res[:, i] = 10**res[:, i]
-#         return res
-#
-#
 # class ConstructMock(object):
 #     """TODO Construct a detailed Line-of-Sight based on the emulated information"""
 #     def __init__(self, bcg_feature, gal_feature, rng=None):
@@ -509,6 +449,11 @@ class PowerKDE(object): # FIXME this should be inherited from a sklearn class
 #         self.mock.to_hdf(fname, key="data")
 #
 #
+
+class RejectionSampler(object):
+    def __init__(self):
+        pass
+
 
 class Validator(object):
     """
