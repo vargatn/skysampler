@@ -508,7 +508,8 @@ def _indexer_chunk_run(chunks):
 
 
 class SurveyIndexer(object):
-    def __init__(self, survey, target, theta_edges, rcens, redges, rareas, search_radius=360., nbins=50, ind=0, **kwargs):
+    def __init__(self, survey, target, theta_edges, rcens, redges, rareas, search_radius=360., nbins=50, ind=0,
+                 flags=DEFAULT_FLAGS, **kwargs):
 
         if isinstance(survey, dict):
             self.survey = SurveyData.from_dict(survey)
@@ -529,11 +530,13 @@ class SurveyIndexer(object):
         self.rareas = rareas
         self.ind = ind
 
+        self.flags = flags
+
         self._get_data()
 
     def _get_data(self):
         self.survey.get_data(self.ind)
-        flags = get_simple_flags(self.survey.tab)
+        flags = get_flags(self.survey.tab, self.flags)
         self.survey.tab = self.survey.tab[flags]
 
     def run(self, fname="test"):
@@ -719,8 +722,8 @@ class MultiDataLoader(object):
         pp = pickle.load(open(self.fnames[0], "rb"))
 
         self.rcens = pp.rcens.copy()
-        self.redges = pp.rcens.copy()
-        self.rareas = pp.rcens.copy()
+        self.redges = pp.redges.copy()
+        self.rareas = pp.rareas.copy()
         self.target_nrow = pp.target["nrow"]
         self.nrbins = len(pp.numprof)
 
