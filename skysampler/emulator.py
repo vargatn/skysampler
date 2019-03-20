@@ -31,7 +31,7 @@ def weighted_std(values, weights):
     values, weights -- Numpy ndarrays with the same shape.
     """
     average = np.average(values, axis=0, weights=weights)
-    variance = np.average((values-average)**2, axis=0, weights=weights)  # Fast and numerically precise
+    variance = np.average((values-average)**2, axis=0, weights=weights)
     return np.sqrt(variance)
 
 
@@ -106,23 +106,62 @@ class FeatureSpaceContainer(object):
         vals = np.histogram(arr, bins=self.redges, weights=self.weights)[0] / self.nobj / self.rareas * scaler
         return vals
 
+    def to_dual(self):
+        res = DualContainer(self.features.columns)
+        res.set_data(self.features, self.weights)
+        return res
+
 
 class DualContainer(object):
     """Contains features in normal and in transformed space"""
+    def __init__(self, columns=None, mean=None, sigma=None):
+        """
+        One column Dataframes can be created by tab[["col"]]
+        Parameters
+        ----------
+        columns
+        mean
+        sigma
+        """
+        self.columns = columns
+        self.mean = mean
+        self.sigma = sigma
 
-    def __init__(self):
-        pass
+    def __getitem__(self, key):
+        if self.mode == "xarr":
+            return self.xarr[key]
+        else:
+            return self.data[key]
 
-    def transofrom(self):
-        pass
+    def set_mode(self, mode):
+        self.mode = mode
 
-    def inverse_transform(self):
-        pass
+    def set_xarr(self, xarr):
+        self.xarr = pd.DataFrame(columns=self.columns, data=xarr)
 
+        self.data = self.xarr * self.sigma + self.mean
+        self.weights = np.ones(len(self.xarr))
+        self.shape = self.data.shape
 
-    @classmethod
-    def from_fsc(cls, fsc):
-        pass
+    def set_data(self, data, weights=None):
+        self.columns = data.columns
+        self.data = data
+        self.weights = weights
+
+        if self.weights is None:
+            self.weights = np.ones(len(self.data))
+
+        self.mean = np.average(self.data, axis=0, weights=self.weights)
+        self.sigma = weighted_std(self.data, weights=self.weights)
+
+        self.xarr = ((self.data - self.mean) / self.sigma)
+        self.shape = self.data.shape
+
+    def transform(self, arr):
+        return (arr - self.mean)/ self.sigma
+
+    def inverse_transform(self, arr):
+        return arr * self.sigma + self.mean
 
 
 def _add(a, b):
@@ -150,40 +189,43 @@ class MultiEyeballer(object):
         "MAG_Z": ("MAG_I - COLOR_I_Z"),
     }
 
-    def __init__(self, fsc, radial_splits=None):
+    def __init__(self, container, radial_splits=None):
         """
         Constructs a large set of comparison images
 
         Density comparisons  and such
 
         """
-        self.fsc = fsc
+        self.container = container
 
         if radial_splits is not None:
             self._radial_splits = radial_splits
 
     def _get_col(self, label):
-        if label in self.fsc.features.columns:
-            col = self.fsc.features[label]
+        if label in self.container.columns:
+            col = self.container[label]
         elif label in self._reconstr_mags:
             tokens = self._reconstr_mags[label].split()
-            col = self.fsc.features[tokens[0]]
+            col = self.container[tokens[0]]
             for i in np.arange(len(tokens) // 2):
-                col = _OPERATORS[tokens[i + 1]](col, self.fsc.features[tokens[i + 2]])
+                col = _OPERATORS[tokens[i + 1]](col, self.container[tokens[i + 2]])
         else:
             raise KeyError
 
         return col
 
     def radial_series(self, label1="MAG_I", label2="COLOR_R_I", rlabel="LOGR",
-                      rlog=True, bins=None, fname=None, vmax=None, nbins=60):
+                      rlog=True, bins=None, fname=None, vmin=1e-3, vmax=None, nbins=60, title=None):
 
-        rr = 10 ** self.fsc.features[rlabel]
+        if rlog:
+            rr = 10 ** self.container[rlabel]
+        else:
+            rr = self.container[rlabel]
 
         col1 = self._get_col(label1)
         col2 = self._get_col(label2)
 
-        ww = self.fsc.weights
+        ww = self.container.weights
 
         if bins is None:
             bins = (np.linspace(col1.min(), col1.max(), nbins),
@@ -198,6 +240,9 @@ class MultiEyeballer(object):
         fig, axarr = plt.subplots(nrows=ncols, ncols=nrows, figsize=(xsize, ysize))
         faxarr = axarr.flatten()
 
+        if title is not None:
+            fig.text(0.125, 0.9, title, fontsize=14)
+
         for axs in axarr:
             axs[0].set_ylabel(label2)
 
@@ -209,8 +254,8 @@ class MultiEyeballer(object):
             if i == 0 and vmax is None:
                 tmp = np.histogram2d(col1[ind], col2[ind], weights=ww[ind], bins=bins, normed=True)[0]
                 vmax = 1 * tmp.max()
-            ax.hist2d(col1[ind], col2[ind], weights=ww[ind], bins=bins,
-                      cmap=plt.cm.terrain, norm=mpl.colors.LogNorm(), normed=True, vmax=vmax)
+            ax.hist2d(col1[ind], col2[ind], weights=ww[ind], bins=bins, cmap=plt.cm.viridis,
+                      norm=mpl.colors.LogNorm(), normed=True, vmax=vmax, vmin=vmin)
             ax.grid(ls=":")
 
             ax.text(0.05, 0.87,
@@ -222,7 +267,7 @@ class MultiEyeballer(object):
         return fig, axarr
 
     def set_info(self, radial_splits=None, cm_diagrams=None, cc_diagrams=None, plot_series=None,
-                 reconstr_mags=None, mag_bins=None, color_bins=None):
+                 reconstr_mags=None):
 
         if radial_splits is not None:
             self._radial_splits = radial_splits
@@ -235,23 +280,26 @@ class MultiEyeballer(object):
         if reconstr_mags is not None:
             self._reconstr_mags = reconstr_mags
 
-    def corner(self, rbin=None, rlabel="LOGR", rlog=True, clognorm=True, nbins=60,
-               fname=None, vmax=None):
+    def corner(self, rbin=None, rlabel="LOGR", rlog=True, clognorm=True, bins=None, nbins=60,
+               fname=None, vmin=None, vmax=None, title=None):
         # This should be one radial bin, or if None, then all
 
-        rr = 10 ** self.fsc.features[rlabel]
+        if rlog:
+            rr = 10 ** self.container[rlabel]
+        else:
+            rr = self.container[rlabel]
 
         if rbin is not None:
             rind = (rr > self._radial_splits[rbin]) & (rr < self._radial_splits[rbin + 1])
         else:
             rind = np.ones(len(rr), dtype=bool)
 
-        columns = list(self.fsc.features.columns)
-
-        bins = []
-        for col in columns:
-            bins.append(np.linspace(self.fsc.features[col].min(),
-                                    self.fsc.features[col].max(), nbins))
+        columns = list(self.container.columns)
+        if bins is None:
+            bins = []
+            for col in columns:
+                bins.append(np.linspace(self.container[col].min(),
+                                        self.container[col].max(), nbins))
 
         nrows = len(columns)
         ncols = len(columns)
@@ -262,6 +310,9 @@ class MultiEyeballer(object):
         fig.subplots_adjust(wspace=0.1, hspace=0.1)
         faxarr = axarr.flatten()
 
+        if title is not None:
+            fig.text(0.125, 0.9, title, fontsize=14)
+
         # blocking upper triangle
         for i in np.arange(nrows):
             for j in np.arange(ncols):
@@ -270,15 +321,15 @@ class MultiEyeballer(object):
                     if clognorm:
                         norm = mpl.colors.LogNorm()
 
-                    axarr[i, j].hist2d(self.fsc.features[columns[j]][rind],
-                                       self.fsc.features[columns[i]][rind],
-                                       weights=self.fsc.weights[rind],
-                                       bins=(bins[j], bins[i]), cmap=plt.cm.terrain,
-                                       norm=norm, normed=True, vmax=vmax)
+                    axarr[i, j].hist2d(self.container[columns[j]][rind],
+                                       self.container[columns[i]][rind],
+                                       weights=self.container.weights[rind],
+                                       bins=(bins[j], bins[i]), #cmap=plt.cm.terrain_r,
+                                       norm=norm, normed=True, vmax=vmax, vmin=vmin)
                     axarr[i, j].grid(ls=":")
                 if i == j:
-                    axarr[i, j].hist(self.fsc.features[columns[i]][rind], bins=bins[i],
-                                     weights=self.fsc.weights[rind],
+                    axarr[i, j].hist(self.container[columns[i]][rind], bins=bins[i],
+                                     weights=self.container.weights[rind],
                                      histtype="step", density=True)
                     axarr[i, j].grid(ls=":")
                 if j > i:
@@ -302,41 +353,53 @@ class MultiEyeballer(object):
         #         this should be almost like the the other but some tweaking with the color scales
         pass
 
-    def plot_radial_ensemble(self, fname_root, cm=True, cc=True, radial=True, nbins=60, vmax=None):
+    def get_corner_bins(self, nbins=60):
+        # corner bins
+        self.corner_bins = []
+        columns = list(self.container.columns)
+        for col in columns:
+            self.corner_bins.append(np.linspace(self.container[col].min(),
+                                                self.container[col].max(), nbins))
+        return self.corner_bins
+
+    def plot_radial_ensemble(self, fname_root, cm=True, cc=True, radial=True, nbins=60, vmax=None, vmin=None,
+                             cm_bins=None, cc_bins=None, corner_bins=None, title=None, suffix=""):
         """loop through a set of predefined diagrams"""
 
         # c-m diagrams
         if cm:
             for cm in self._cm_diagrams:
-                fname = fname_root + "_cm_" + cm[0] + "_" + cm[1] + ".png"
+                fname = fname_root + "_cm_" + cm[0] + "_" + cm[1] + suffix + ".png"
                 print(fname)
-                self.radial_series(label1=cm[0], label2=cm[1], fname=fname, nbins=nbins, vmax=vmax)
+                self.radial_series(label1=cm[0], label2=cm[1], fname=fname,
+                                   nbins=nbins, vmax=vmax, bins=cm_bins, title=title)
 
         # c-c diagrams
         if cc:
             for cc in self._cc_diagrams:
-                fname = fname_root + "_cc_" + cc[0] + "_" + cc[1] + ".png"
+                fname = fname_root + "_cc_" + cc[0] + "_" + cc[1] + suffix + ".png"
                 print(fname)
-                self.radial_series(label1=cc[0], label2=cc[1], fname=fname, nbins=nbins, vmax=vmax)
+                self.radial_series(label1=cc[0], label2=cc[1], fname=fname,
+                                   nbins=nbins, vmax=vmax, bins=cc_bins, title=title)
 
-                #         # all -radial bin
+        # all -radial bin
         if radial:
-            fname = fname_root + "_corner_all.png"
+            fname = fname_root + "_corner_all" + suffix + ".png"
             print(fname)
-            self.corner(fname=fname, nbins=nbins, vmax=vmax)
+            self.corner(fname=fname, nbins=nbins, vmax=vmax, bins=corner_bins, title=title, vmin=vmin)
 
             # radial bins
             for rbin in np.arange(len(self._radial_splits) - 1):
-                fname = fname_root + "_corner_rbin{:02d}.png".format(rbin)
+                fname = fname_root + "_corner_rbin{:02d}".format(rbin) + suffix + ".png"
                 print(fname)
-                self.corner(rbin=rbin, fname=fname, nbins=nbins, vmax=vmax)
+                self.corner(rbin=rbin, fname=fname, nbins=nbins, vmax=vmax, bins=corner_bins, title=title, vmin=vmin)
 
 
 # This is just a standard function
 class FeatureEmulator(object):
-    def __init__(self, fsc, rng=None):
+    def __init__(self, container, rng=None):
         """This is just the packaged version of the KDE"""
-        self.fsc = fsc
+        self.container = container
         self.kde = None
 
         if rng is None:
@@ -344,29 +407,125 @@ class FeatureEmulator(object):
         else:
             self.rng = rng
 
-    def train(self, bandwidth=0.2):
+    def train(self, bandwidth=0.2, kernel="gaussian", **kwargs):
             """train the emulator"""
             self.bandwidth = bandwidth
-            self.kde = neighbors.KernelDensity(bandwidth=self.bandwidth)
-            self.kde.fit(self.fsc.xarr, sample_weight=self.fsc.weights)
+            self.kde = neighbors.KernelDensity(bandwidth=self.bandwidth, kernel=kernel, **kwargs)
+            self.kde.fit(self.container.xarr, sample_weight=self.container.weights)
 
-    def draw(self, num, expand=True, linear=True):
-        """draws random samples from KDE"""
-        res = self.kde.sample(n_samples=int(num), random_state=self.rng)
-        if expand:
-            res = self.fsc.inverse_rescale(res)
-            if linear:
-                for i, log in enumerate(self.fsc.logs):
-                    if log:
-                        res[:, i] = 10**res[:, i]
-
+    def draw(self, num, rmax=None, rcol="LOGR"):
+        """draws random samples from KDE maximum radius"""
+        res = DualContainer(columns=self.container.columns, mean=self.container.mean, sigma=self.container.sigma)
+        _res = self.kde.sample(n_samples=int(num), random_state=self.rng)
+        res.set_xarr(_res)
+        if rmax is not None:
+            inds = (res.data[rcol] > rmax)
+            while inds.sum():
+                print(inds.sum())
+                vals = self.kde.sample(n_samples=int(inds.sum()), random_state=self.rng)
+                _res[inds, :] = vals
+                res.set_xarr(_res)
+                inds = (res.data[rcol] > rmax)
         return res
 
-    def cross_validate(self):
-        pass
+    def score_samples(self, arr):
+        """Assuming that arr is in the data format"""
+
+        values = self.container.transform(arr)
+        res = self.kde.score_samples(values)
+        return res
+
+def get_nearest(val, arr):
+    res = []
+    for tmp in val:
+        res.append(np.argmin((tmp - arr)**2.))
+    return np.array(res)
+
+class CompositeDraw(object):
+    def __init__(self, wemu, demu, ipivot=22.4, whistsize=1e6, icutmin=22, rng=None):
+        self.wemu = wemu
+        self.demu = demu
+        self.ipivot = ipivot
+        self.whistsize = whistsize
+        self.icutmin = icutmin
+
+        self._mkref()
+        if rng is not None:
+            self.rng = rng
+        else:
+            self.rng = np.random.RandomState()
+
+    def _mkref(self):
+        self.ibins = np.linspace(13, 30, 500)
+        self.icens = self.ibins[:-1] + np.diff(self.ibins) / 2.
+
+        wsamples = self.wemu.draw(self.whistsize)
+
+        self.wip = np.histogram(wsamples.data["MAG_I"], weights=wsamples.weights, bins=self.ibins, density=True)[0]
+        self.dip = np.histogram(self.demu.container.data["MAG_I"], weights=self.demu.container.weights, bins=self.ibins, density=True)[0]
+
+        iscale = np.argmin((self.icens - self.ipivot) ** 2.)
+        self.ifactor = self.wip[iscale] / self.dip[iscale]
+        self.refcurve = self.dip * self.ifactor
+
+        self.dip0 = np.zeros(len(self.icens))
+        ii = self.icens <= self.ipivot
+        self.dip0[ii] = self.wip[ii]
+        ii = self.icens > self.ipivot
+        self.dip0[ii] = self.dip[ii] * self.ifactor
+
+        self.fracdeep = np.sum(self.dip0) / np.sum(self.wip) - 1.
+
+    def draw(self, wide_samples_to_draw):
+
+        self.wide_samples_to_draw = int(wide_samples_to_draw)
+        self.deep_samples_to_draw = int(self.wide_samples_to_draw * self.fracdeep)
 
 
-class PowerKDE(object): # FIXME this should be inherited from a sklearn class
+        wide = self.wemu.draw(self.wide_samples_to_draw)
+        wide.set_mode("data")
+        deep = self._deepdraw()
+        deep.set_mode("data")
+
+        joint = DualContainer()
+        joint.set_data(pd.concat((wide.data, deep.data), sort=False).reset_index(drop=True))
+        joint.set_mode("data")
+
+        return joint, wide, deep
+
+    def _deepdraw(self):
+
+        chunksize = 100000
+        chunks = []
+        nobjs = 0
+        while nobjs < self.deep_samples_to_draw:
+
+            dsamples = self.demu.draw(chunksize)
+            dsamples.set_mode("data")
+            rands = self.rng.uniform(size=len(dsamples.data))
+            inodes = get_nearest(dsamples["MAG_I"], self.icens)
+
+            refvals = self.refcurve[inodes]
+            wvals = self.wip[inodes]
+            bools = (rands * refvals > wvals) & (dsamples["MAG_I"] > self.icutmin)
+
+            chunks.append(dsamples.data[bools])
+            nobjs += bools.sum()
+        chunks = pd.concat(chunks)
+        chunks = chunks.iloc[:self.deep_samples_to_draw].copy()
+
+        tmp = self.wemu.draw(self.deep_samples_to_draw)
+        chunks["LOGR"] = tmp.data["LOGR"].values
+        chunks = chunks.reset_index(drop=True)
+
+        res = DualContainer()
+        res.set_data(chunks)
+        return res
+
+
+
+
+class PowerKDE(object): # FIXME this should be inhaerited from a sklearn class
     def __init__(self):
         """This class should have a """
         pass

@@ -17,15 +17,16 @@ from .paths import setup_logger, logfile_info, config
 
 
 BADVAL = -9999.
+
 DEFAULT_FLAGS = [
     ("MOF_CM_FLAGS", "==", 0),
-    ("MOF_CM_T_R", "in", (0., 20)),
-    ("MOF_CM_MAG_CORRECTED_I", "in", (15, 30)),
+    ("MOF_CM_T", "in", (0., 100)),
+    ("MOF_CM_MAG_CORRECTED_I", "in", (14, 24)),
     (("MOF_CM_MAG_CORRECTED_G", "-", "MOF_CM_MAG_CORRECTED_R"), "in", (-4, 4)),
     (("MOF_CM_MAG_CORRECTED_R", "-", "MOF_CM_MAG_CORRECTED_I"), "in", (-4, 4)),
     (("MOF_CM_MAG_CORRECTED_I", "-", "MOF_CM_MAG_CORRECTED_Z"), "in", (-4, 4)),
-    ("MOF_CM_T_S2N", ">", 4.)
 ]
+
 
 logger = setup_logger("INDEXER", level=config["logging_level"], logfile_info=logfile_info)
 
@@ -536,8 +537,11 @@ class SurveyIndexer(object):
 
     def _get_data(self):
         self.survey.get_data(self.ind)
-        flags = get_flags(self.survey.tab, self.flags)
-        self.survey.tab = self.survey.tab[flags]
+        if self.flags is not None:
+            flags = get_flags(self.survey.tab, self.flags)
+            self.survey.tab = self.survey.tab[flags]
+        else:
+            self.survey.tab = self.survey.tab
 
     def run(self, fname="test"):
         self.index()
