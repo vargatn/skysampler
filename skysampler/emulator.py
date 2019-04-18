@@ -11,12 +11,20 @@ e.g. radial number profile (in absolute terms)
 import numpy as np
 import pandas as pd
 import sklearn.neighbors as neighbors
+import sklearn.model_selection as modsel
+import sklearn.preprocessing as preproc
+import copy
+
 import matplotlib as mpl
 try:
     import matplotlib.pyplot as plt
 except:
     mpl.use("Agg")
     import matplotlib.pyplot as plt
+
+import multiprocessing as mp
+
+from .utils import partition
 
 
 def get_angle(num, rng):
@@ -66,14 +74,23 @@ class FeatureSpaceContainer(object):
             if isinstance(col[1], str):
                 self.features[col[0]] = self.alldata[col[1]]
             else:
+                if not isinstance(col[1][0], str):
+                    col1 = col[1][0]
+                else:
+                    col1 = self.alldata[col[1][0]]
+                if not isinstance(col[1][1], str):
+                    col2 = col[1][1]
+                else:
+                    col2 = self.alldata[col[1][1]]
+
                 if col[1][2] == "-":
-                    self.features[col[0]] = self.alldata[col[1][0]] - self.alldata[col[1][1]]
+                    self.features[col[0]] = col1 - col2
                 elif col[1][2] == "+":
-                    self.features[col[0]] = self.alldata[col[1][0]] + self.alldata[col[1][1]]
+                    self.features[col[0]] = col1 + col2
                 elif col[1][2] == "*":
-                    self.features[col[0]] = self.alldata[col[1][0]] * self.alldata[col[1][1]]
+                    self.features[col[0]] = col1 * col2
                 elif col[1][2] == "/":
-                    self.features[col[0]] = self.alldata[col[1][0]] / self.alldata[col[1][1]]
+                    self.features[col[0]] = col1 / col2
                 else:
                     raise KeyError("only + - * / are supported at the moment")
 
@@ -87,17 +104,6 @@ class FeatureSpaceContainer(object):
             if logs is not None and logs[i]:
               self.features[col[0]] = np.log10(self.features[col[0]])
 
-    def standardize(self):
-        self.mean = np.average(self.features.values, axis=0, weights=self.weights)
-        self.sigma = weighted_std(self.features, weights=self.weights)
-        self.xarr = ((self.features - self.mean) / self.sigma)
-
-    def rescale(self, tab):
-        return (tab - self.mean) / self.sigma
-
-    def inverse_rescale(self, tab):
-        return tab * self.sigma + self.mean
-
     def surfdens(self, icol=0, scaler=1):
         if self.logs[icol]:
             arr = 10**self.features.values[:, icol]
@@ -106,15 +112,53 @@ class FeatureSpaceContainer(object):
         vals = np.histogram(arr, bins=self.redges, weights=self.weights)[0] / self.nobj / self.rareas * scaler
         return vals
 
-    def to_dual(self):
-        res = DualContainer(self.features.columns)
+    def to_dual(self, **kwargs):
+        res = DualContainer(self.features.columns, **kwargs)
         res.set_data(self.features, self.weights)
+        return res
+
+    def downsample(self, nmax=10000, r_key="LOGR", nbins=40, rng=None, **kwargs):
+        """Radially balanced downsampling"""
+
+        if rng is None:
+            rng = np.random.RandomState()
+
+        rarr = self.features[r_key]
+        # rbins = np.sort(rng.uniform(low=rarr.min(), high=rarr.max(), size=nbins+1))
+        rbins = np.linspace(rarr.min(), rarr.max(), nbins+1)
+
+        tmp_features = []
+        tmp_weights = []
+        for i, tmp in enumerate(rbins[:-1]):
+            selinds = (self.features[r_key] > rbins[i]) & (self.features[r_key] < rbins[i + 1])
+            vals = self.features.loc[selinds]
+            ww = self.weights.loc[selinds]
+
+            if len(vals) < nmax:
+                tmp_features.append(vals)
+                tmp_weights.append(ww)
+            else:
+                inds = np.arange(len(vals))
+                pp = ww / ww.sum()
+                chindex = rng.choice(inds, size=nmax, replace=False, p=pp)
+
+                newvals = vals.iloc[chindex]
+                newww = ww.iloc[chindex] * len(ww) / nmax
+
+                tmp_features.append(newvals)
+                tmp_weights.append(newww)
+
+        features = pd.concat(tmp_features)
+        weights = pd.concat(tmp_weights)
+
+        res = DualContainer(features.columns, **kwargs)
+        res.set_data(features, weights=weights)
         return res
 
 
 class DualContainer(object):
     """Contains features in normal and in transformed space"""
-    def __init__(self, columns=None, mean=None, sigma=None):
+    def __init__(self, columns=None, mean=None, sigma=None, r_normalize=False, qt_params=None, r_key="LOGR"):
         """
         One column Dataframes can be created by tab[["col"]]
         Parameters
@@ -127,6 +171,11 @@ class DualContainer(object):
         self.mean = mean
         self.sigma = sigma
 
+        self.r_normalize = r_normalize
+        self.r_key = r_key
+        self.qt_params = qt_params
+        self.qt = None
+
     def __getitem__(self, key):
         if self.mode == "xarr":
             return self.xarr[key]
@@ -137,31 +186,111 @@ class DualContainer(object):
         self.mode = mode
 
     def set_xarr(self, xarr):
-        self.xarr = pd.DataFrame(columns=self.columns, data=xarr)
+        self.xarr = pd.DataFrame(columns=self.columns, data=xarr).reset_index(drop=True)
+
+        if self.r_normalize:
+            self.qt = preproc.QuantileTransformer(output_distribution="normal")
+            self.qt.set_params(**self.qt_params["params"])
+            self.qt.quantiles_ = self.qt_params["quantiles"]
+            self.qt.references_ = self.qt_params["references"]
+
+            self.xarr[self.r_key] = self.qt.inverse_transform(self.xarr[self.r_key].values.reshape(-1, 1))
 
         self.data = self.xarr * self.sigma + self.mean
-        self.weights = np.ones(len(self.xarr))
+        self.weights = pd.Series(np.ones(len(self.data)), name="WEIGHT")
         self.shape = self.data.shape
 
     def set_data(self, data, weights=None):
         self.columns = data.columns
-        self.data = data
+        self.data = data.reset_index(drop=True)
         self.weights = weights
 
         if self.weights is None:
-            self.weights = np.ones(len(self.data))
+            self.weights = pd.Series(np.ones(len(self.data)), name="WEIGHT")
+            # self.weights["WEIGHT"] =
 
+        # print(self.weights.shape)
+        # print(self.data.shape)
         self.mean = np.average(self.data, axis=0, weights=self.weights)
         self.sigma = weighted_std(self.data, weights=self.weights)
 
         self.xarr = ((self.data - self.mean) / self.sigma)
+
+        if self.r_normalize:
+            self.qt = preproc.QuantileTransformer(output_distribution="normal")
+            self.qt.fit(self.xarr[self.r_key].values.reshape(-1, 1))
+            self.qt_params = {
+                "params": self.qt.get_params(),
+                "quantiles": self.qt.quantiles_,
+                "references": self.qt.references_,
+            }
+            self.xarr[self.r_key] = self.qt.transform(self.xarr[self.r_key].values.reshape(-1, 1))
+
         self.shape = self.data.shape
+        self.mode = "data"
 
     def transform(self, arr):
-        return (arr - self.mean)/ self.sigma
+        """From Data to Xarr"""
+
+        if not isinstance(arr, pd.DataFrame):
+            tab = pd.DataFrame(data=arr, columns=self.columns)
+        else:
+            tab = arr
+
+        res = (tab - self.mean)/ self.sigma
+        if self.r_normalize:
+            res[self.r_key] = self.qt.transform(res[self.r_key].values.reshape(-1, 1))
+
+        return res
 
     def inverse_transform(self, arr):
-        return arr * self.sigma + self.mean
+        """From Xarr to Data"""
+
+        if not isinstance(arr, pd.DataFrame):
+            tab = pd.DataFrame(data=arr, columns=self.columns)
+        else:
+            tab = arr
+
+        if self.r_normalize:
+            tab[self.r_key] = self.qt.inverse_transform(tab[self.r_key].values.reshape(-1, 1))
+        res = tab * self.sigma + self.mean
+        return res
+
+    def shuffle(self):
+        self.sample(n=None, frac=1.)
+
+    def sample(self, n=None, frac=1.):
+        inds = np.arange(len(self.data))
+
+        tab = pd.DataFrame()
+        tab["IND"] = inds
+        inds = tab.sample(n=n, frac=frac)["IND"].values
+
+        self.data = self.data.iloc[inds].copy().reset_index(drop=True)
+        self.weights = self.weights.iloc[inds].copy().reset_index(drop=True)
+        self.xarr = self.xarr.iloc[inds].copy().reset_index(drop=True)
+        self.shape = self.data.shape
+
+    def set_rmax(self, rmax= 100., rkey="LOGR"):
+        inds = self.data[rkey] < rmax
+
+        res = DualContainer(**self.get_meta())
+        res.data = self.data.loc[inds].copy().reset_index(drop=True)
+        res.weights = self.weights.loc[inds].copy().reset_index(drop=True)
+        res.xarr = self.xarr.loc[inds].copy().reset_index(drop=True)
+        res.shape = res.data.shape
+        return res
+
+    def get_meta(self):
+        info = {
+            "columns": self.columns,
+            "mean": self.mean,
+            "sigma": self.sigma,
+            "qt_params": self.qt_params,
+            "r_key": self.r_key,
+            "r_normalize": self.r_normalize
+        }
+        return info
 
 
 def _add(a, b):
@@ -189,7 +318,7 @@ class MultiEyeballer(object):
         "MAG_Z": ("MAG_I - COLOR_I_Z"),
     }
 
-    def __init__(self, container, radial_splits=None):
+    def __init__(self, container, radial_splits=None, cmap=None):
         """
         Constructs a large set of comparison images
 
@@ -197,6 +326,7 @@ class MultiEyeballer(object):
 
         """
         self.container = container
+        self.cmap = cmap
 
         if radial_splits is not None:
             self._radial_splits = radial_splits
@@ -254,7 +384,7 @@ class MultiEyeballer(object):
             if i == 0 and vmax is None:
                 tmp = np.histogram2d(col1[ind], col2[ind], weights=ww[ind], bins=bins, normed=True)[0]
                 vmax = 1 * tmp.max()
-            ax.hist2d(col1[ind], col2[ind], weights=ww[ind], bins=bins, cmap=plt.cm.viridis,
+            ax.hist2d(col1[ind], col2[ind], weights=ww[ind], bins=bins, cmap=self.cmap,
                       norm=mpl.colors.LogNorm(), normed=True, vmax=vmax, vmin=vmin)
             ax.grid(ls=":")
 
@@ -284,15 +414,16 @@ class MultiEyeballer(object):
                fname=None, vmin=None, vmax=None, title=None):
         # This should be one radial bin, or if None, then all
 
-        if rlog:
-            rr = 10 ** self.container[rlabel]
-        else:
-            rr = self.container[rlabel]
+
 
         if rbin is not None:
+            if rlog:
+                rr = 10 ** self.container[rlabel]
+            else:
+                rr = self.container[rlabel]
             rind = (rr > self._radial_splits[rbin]) & (rr < self._radial_splits[rbin + 1])
         else:
-            rind = np.ones(len(rr), dtype=bool)
+            rind = np.ones(len(self.container.data), dtype=bool)
 
         columns = list(self.container.columns)
         if bins is None:
@@ -324,7 +455,7 @@ class MultiEyeballer(object):
                     axarr[i, j].hist2d(self.container[columns[j]][rind],
                                        self.container[columns[i]][rind],
                                        weights=self.container.weights[rind],
-                                       bins=(bins[j], bins[i]), #cmap=plt.cm.terrain_r,
+                                       bins=(bins[j], bins[i]), cmap=self.cmap,
                                        norm=norm, normed=True, vmax=vmax, vmin=vmin)
                     axarr[i, j].grid(ls=":")
                 if i == j:
@@ -406,34 +537,260 @@ class FeatureEmulator(object):
             self.rng = np.random.RandomState()
         else:
             self.rng = rng
-
-    def train(self, bandwidth=0.2, kernel="gaussian", **kwargs):
+    def train(self, bandwidth=0.2, kernel="tophat", atol=1e-6, rtol=1e-6, breadth_first=False, **kwargs):
             """train the emulator"""
             self.bandwidth = bandwidth
-            self.kde = neighbors.KernelDensity(bandwidth=self.bandwidth, kernel=kernel, **kwargs)
+            self.kwargs = kwargs
+            self.kde = neighbors.KernelDensity(bandwidth=self.bandwidth, kernel=kernel,
+                                               atol=atol, rtol=rtol, breadth_first=breadth_first, **kwargs)
             self.kde.fit(self.container.xarr, sample_weight=self.container.weights)
 
-    def draw(self, num, rmax=None, rcol="LOGR"):
+    def draw(self, num, rmin=None, rmax=None, rcol="LOGR", mode="data"):
         """draws random samples from KDE maximum radius"""
-        res = DualContainer(columns=self.container.columns, mean=self.container.mean, sigma=self.container.sigma)
+        res = DualContainer(**self.container.get_meta())
         _res = self.kde.sample(n_samples=int(num), random_state=self.rng)
         res.set_xarr(_res)
-        if rmax is not None:
-            inds = (res.data[rcol] > rmax)
+
+        if (rmin is not None) or (rmax is not None):
+            if rmin is None:
+                rmin = res.data[rcol].min()
+
+            if rmax is None:
+                rmax = res.data[rcol].max()
+
+            # these are the indexes to replace, not the ones to keep...
+            inds = (res.data[rcol] > rmax) | (res.data[rcol] < rmin)
             while inds.sum():
-                print(inds.sum())
+            # print(inds.sum())
                 vals = self.kde.sample(n_samples=int(inds.sum()), random_state=self.rng)
                 _res[inds, :] = vals
                 res.set_xarr(_res)
-                inds = (res.data[rcol] > rmax)
+                inds = (res.data[rcol] > rmax) | (res.data[rcol] < rmin)
+
+        res.set_mode(mode)
         return res
 
     def score_samples(self, arr):
         """Assuming that arr is in the data format"""
 
-        values = self.container.transform(arr)
-        res = self.kde.score_samples(values)
+        arr = self.container.transform(arr)
+        res = self.kde.score_samples(arr)
         return res
+
+    def to_dict(self):
+
+
+        # Memory view of training data cannot be pickled and is not strictly necessary
+        _state = list(self.kde.tree_.__getstate__())
+        sample_weights = copy.deepcopy(np.array(_state[-1]))
+
+
+        # we have to change the state so that it can be pickled, it will be reconustructed later
+        state = copy.deepcopy(_state[:-1])
+        state.append(None)
+
+        self.kde.tree_.__setstate__(state)
+        res = {
+            "bandwidth": self.bandwidth,
+            "container_meta": self.container.get_meta(),
+            "kde": copy.deepcopy(self.kde),
+            "sample_weights": sample_weights,
+        }
+        # we have to reset the original state
+        self.kde.tree_.__setstate__(_state)
+        # print(res["sample_weights"])
+        # print(np.array(self.kde.tree_.__getstate__()[-1]))
+        return res
+
+    @classmethod
+    def from_dict(cls, info):
+        container = DualContainer(**info["container_meta"])
+        res = cls(container)
+        res.kde = info["kde"]
+        _state = list(res.kde.tree_.__getstate__())
+        _state[-1] = info["sample_weights"]
+        # _state[-2] = neighbors.dist_metrics.EuclideanDistance()
+        res.kde.tree_.__setstate__(_state)
+        return res
+
+
+def to_buffer(arr):
+    mp_arr = mp.Array("d", arr.flatten(), lock=False)
+    return mp_arr, arr.shape
+
+
+def from_buffer(mp_arr, shape):
+    arr = np.frombuffer(mp_arr, dtype="d").reshape(shape)
+    return arr
+
+
+class KFoldValidator(object):
+    """
+    TODO validation package,
+
+    Should automate splitting base data into training and test
+    """
+    def __init__(self, container, cv=5, param_grid=None, extra_params=None, score_train=False):
+        self.container = container
+        self.cv = cv
+
+        self.param_grid = param_grid
+        self.param_list = list(modsel.ParameterGrid(param_grid))
+        if extra_params is None:
+            self.extra_params = {}
+        else:
+            self.extra_params = extra_params
+
+        # self.mp_xarr, self.mp_xarr_shape = to_buffer(self.container.xarr.values)
+        # self.mp_w, self.mp_w_shape = to_buffer(self.container.weights.values)
+
+        self._calc_split()
+
+        self.result = None
+        self.scores = None
+        self.score_train = score_train
+
+    def _calc_split(self):
+        # TODO replace this with something that balances weights...
+
+        inds = np.arange(len(self.container.data))
+        # ww = self.container.weights
+
+        kfold = modsel.KFold(n_splits=self.cv)
+        self.splits = list(kfold.split(inds))
+
+    def _get_infodicts(self):
+        """
+        Splits the dataset into a set of dictionaries dispathable to subprocesses
+        """
+
+        infodicts = []
+        for i, params in enumerate(self.param_list):
+            for j, split in enumerate(self.splits):
+                info = {
+                    "id": (i,j),
+                    "split": split,
+                    "params": params,
+                    "extra_params": self.extra_params,
+                    "xarr": self.container.xarr,
+                    "w": self.container.weights,
+                    "score_train": self.score_train,
+                    # "meta": self.container.get_meta(),
+                    # "mp_xarr": self.mp_xarr,
+                    # "mp_xarr_shape": self.mp_xarr_shape,
+                    # "mp_w": self.mp_w,
+                    # "mp_w_shape": self.mp_w_shape,
+                }
+                infodicts.append(info)
+
+        return infodicts
+
+    def run(self, nprocess=1):
+
+        self.infodicts = self._get_infodicts()
+
+        if nprocess > len(self.infodicts):
+            nprocess = len(self.infodicts)
+        info_chunks = partition(self.infodicts, nprocess)
+
+        pool = mp.Pool(processes=nprocess)
+        try:
+            pp = pool.map_async(_run_validation_chunks, info_chunks)
+            # the results here should be a list of score values
+            self.result = pp.get(86400)  # apparently this counters a bug in the exception passing in python.subprocess...
+        except KeyboardInterrupt:
+            print("Caught KeyboardInterrupt, terminating workers")
+            pool.terminate()
+            pool.join()
+        else:
+            pool.close()
+            pool.join()
+
+        self.train_scores = []
+        self.test_scores = []
+        for res in self.result:
+            if self.score_train:
+                self.train_scores.append(res[0])
+            self.test_scores.append(res[1])
+
+        if self.score_train:
+            self.train_scores = np.concatenate(self.train_scores).reshape((len(self.param_list), self.cv))
+        self.test_scores = np.concatenate(self.test_scores).reshape((len(self.param_list), self.cv))
+
+
+def _run_validation_chunks(infodicts):
+
+    train_scores = []
+    test_scores = []
+
+    train_allscores = []
+    test_allscores = []
+    try:
+        for info in infodicts:
+            kdes = KDEScorer(info)
+            kdes.train()
+            if info["score_train"]:
+                train_score, tmp = kdes.score(on="train")
+                train_scores.append(train_score)
+                train_allscores.append(tmp)
+            #
+            test_score, tmp = kdes.score(on="test")
+            test_scores.append(test_score)
+            test_allscores.append(tmp)
+
+    except KeyboardInterrupt:
+            pass
+
+    return train_scores, test_scores, (train_allscores, test_allscores)
+    # return
+
+
+INFVAL = -16  # this is the value we replace -inf with, effectively a surrogate for log(0), an obvious approximation...
+def force_finite(arr):
+    inds = np.invert(np.isfinite(arr))
+    arr[inds] = INFVAL
+    return arr
+
+
+def ring_area(r1, r2):
+    val = np.pi * (r2**2. - r1**2.)
+    return val
+
+
+class KDEScorer(object):
+    def __init__(self, info):
+        # self.xarr = from_buffer(info["mp_xarr"], info["mp_xarr_shape"])
+        # self.weights = from_buffer(info["mp_w"], info["mp_w_shape"])
+        self.xarr = info["xarr"]
+        self.weights = info["w"]
+
+        self.train_inds = info["split"][0]
+        self.test_inds = info["split"][1]
+
+        self.params = info["params"]
+        self.params.update(info["extra_params"])
+
+        self.kde = neighbors.KernelDensity(**self.params)
+
+    def train(self):
+        self.kde.fit(self.xarr.values[self.train_inds, :], sample_weight=self.weights.values[self.train_inds])
+
+    def score(self, on="test"):
+        if on == "test":
+            index = self.test_inds
+        elif on == "train":
+            index = self.train_inds
+        else:
+            raise KeyError
+
+        raw_scores = self.kde.score_samples(self.xarr.values[index, :])
+        scores = force_finite(raw_scores)
+
+        # this does not inlcude weights, but is OK as we don't want result skewed by the high weight limb...
+        res = scores.sum() / len(scores)
+
+        return res, scores
+
 
 def get_nearest(val, arr):
     res = []
@@ -441,13 +798,15 @@ def get_nearest(val, arr):
         res.append(np.argmin((tmp - arr)**2.))
     return np.array(res)
 
+
 class CompositeDraw(object):
-    def __init__(self, wemu, demu, ipivot=22.4, whistsize=1e6, icutmin=22, rng=None):
+    def __init__(self, wemu, demu, ipivot=22.4, whistsize=1e6, icutmin=22, chunksize=1e5, rng=None):
         self.wemu = wemu
         self.demu = demu
         self.ipivot = ipivot
         self.whistsize = whistsize
         self.icutmin = icutmin
+        self.chunksize = int(chunksize)
 
         self._mkref()
         if rng is not None:
@@ -495,12 +854,11 @@ class CompositeDraw(object):
 
     def _deepdraw(self):
 
-        chunksize = 100000
         chunks = []
         nobjs = 0
         while nobjs < self.deep_samples_to_draw:
 
-            dsamples = self.demu.draw(chunksize)
+            dsamples = self.demu.draw(self.chunksize)
             dsamples.set_mode("data")
             rands = self.rng.uniform(size=len(dsamples.data))
             inodes = get_nearest(dsamples["MAG_I"], self.icens)
@@ -517,6 +875,9 @@ class CompositeDraw(object):
         tmp = self.wemu.draw(self.deep_samples_to_draw)
         chunks["LOGR"] = tmp.data["LOGR"].values
         chunks = chunks.reset_index(drop=True)
+        cols = [chunks.columns[-1], ] + list(chunks.columns[:-1])
+        # print(cols)
+        chunks = chunks[cols]
 
         res = DualContainer()
         res.set_data(chunks)
@@ -610,16 +971,6 @@ class PowerKDE(object): # FIXME this should be inhaerited from a sklearn class
 #
 
 class RejectionSampler(object):
-    def __init__(self):
-        pass
-
-
-class Validator(object):
-    """
-    TODO validation package,
-
-    Should automate splitting base data into training and test
-    """
     def __init__(self):
         pass
 
