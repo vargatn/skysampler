@@ -8,12 +8,19 @@ e.g. radial number profile (in absolute terms)
 
 """
 
+import fitsio as fio
 import numpy as np
 import pandas as pd
 import sklearn.neighbors as neighbors
 import sklearn.model_selection as modsel
 import sklearn.preprocessing as preproc
 import copy
+import sys
+
+ENDIANS = {
+    "little": "<",
+    "big": ">",
+}
 
 import matplotlib as mpl
 try:
@@ -43,11 +50,85 @@ def weighted_std(values, weights):
     return np.sqrt(variance)
 
 
-class FeatureSpaceContainer(object):
+class BaseContainer(object):
+
+    def __init__(self):
+        self.alldata = None
+        self.features = None
+        self.weights = None
+
+    def construct_features(self, columns, limits=None, logs=None):
+        self.columns = columns
+        self.limits = limits
+        self.logs = logs
+        self.features = pd.DataFrame()
+
+        self.inds = np.ones(len(self.alldata), dtype=bool)
+        for i, col in enumerate(columns):
+            if isinstance(col[1], str):
+                res = self.alldata[col[1]]
+            else:
+                if len(col[1]) == 3:
+                    if isinstance(col[1][0], str):
+                        col1 = self.alldata[col[1][0]]
+                    elif isinstance(col[1][0], (list, tuple)):
+                        col1 = self.alldata[col[1][0][0]][:, col[1][0][1]]
+                    else:
+                        col1 = col[1][0]
+
+                    if isinstance(col[1][1], str):
+                        col2 = self.alldata[col[1][1]]
+                    elif isinstance(col[1][1], (list, tuple)):
+                        col2 = self.alldata[col[1][1][0]][:, col[1][1][1]]
+                    else:
+                        col2 = col[1][1]
+
+                    if col[1][2] == "-":
+                        res = col1 - col2
+                    elif col[1][2] == "+":
+                        res = col1 + col2
+                    elif col[1][2] == "*":
+                        res = col1 * col2
+                    elif col[1][2] == "/":
+                        res = col1 / col2
+                    elif col[1][2] == "SQSUM":
+                        res = np.sqrt(col1**2. + col2**2.)
+                    else:
+                        raise KeyError("only + - * / are supported at the moment")
+
+                elif len(col[1]) == 2:
+                    res = self.alldata[col[1][0]][:, col[1][1]]
+                else:
+                    raise KeyError
+
+            self.features[col[0]] = res.astype("float64")
+            #
+            if limits is not None:
+                self.inds &= (self.features[col[0]] > limits[i][0]) & (self.features[col[0]] < limits[i][1])
+
+        self.features = self.features[self.inds]
+
+        try:
+            self.weights = self.alldata["WEIGHT"][self.inds]
+        except:
+            self.weights = pd.Series(data=np.ones(len(self.features)), name="WEIGHT")
+
+        for i, col in enumerate(columns):
+            if logs is not None and logs[i]:
+              self.features[col[0]] = np.log10(self.features[col[0]])
+
+    def to_dual(self, **kwargs):
+        res = DualContainer(self.features.columns, **kwargs)
+        res.set_data(self.features, self.weights)
+        return res
+
+
+class FeatureSpaceContainer(BaseContainer):
     def __init__(self, info):
         """
         This needs to be done first
         """
+        BaseContainer.__init__(self)
 
         self.rcens = info.rcens
         self.redges = info.redges
@@ -63,47 +144,6 @@ class FeatureSpaceContainer(object):
 
         self.nobj = self.target.nrow
 
-    def construct_features(self, columns, limits=None, logs=None):
-        self.columns = columns
-        self.limits = limits
-        self.logs = logs
-        self.features = pd.DataFrame()
-
-        self.inds = np.ones(len(self.alldata), dtype=bool)
-        for i, col in enumerate(columns):
-            if isinstance(col[1], str):
-                self.features[col[0]] = self.alldata[col[1]]
-            else:
-                if not isinstance(col[1][0], str):
-                    col1 = col[1][0]
-                else:
-                    col1 = self.alldata[col[1][0]]
-                if not isinstance(col[1][1], str):
-                    col2 = col[1][1]
-                else:
-                    col2 = self.alldata[col[1][1]]
-
-                if col[1][2] == "-":
-                    self.features[col[0]] = col1 - col2
-                elif col[1][2] == "+":
-                    self.features[col[0]] = col1 + col2
-                elif col[1][2] == "*":
-                    self.features[col[0]] = col1 * col2
-                elif col[1][2] == "/":
-                    self.features[col[0]] = col1 / col2
-                else:
-                    raise KeyError("only + - * / are supported at the moment")
-
-            if limits is not None:
-                self.inds &= (self.features[col[0]] > limits[i][0]) & (self.features[col[0]] < limits[i][1])
-
-        self.features = self.features[self.inds]
-        self.weights = self.alldata["WEIGHT"][self.inds]
-
-        for i, col in enumerate(columns):
-            if logs is not None and logs[i]:
-              self.features[col[0]] = np.log10(self.features[col[0]])
-
     def surfdens(self, icol=0, scaler=1):
         if self.logs[icol]:
             arr = 10**self.features.values[:, icol]
@@ -111,11 +151,6 @@ class FeatureSpaceContainer(object):
             arr = self.features.values[:, icol]
         vals = np.histogram(arr, bins=self.redges, weights=self.weights)[0] / self.nobj / self.rareas * scaler
         return vals
-
-    def to_dual(self, **kwargs):
-        res = DualContainer(self.features.columns, **kwargs)
-        res.set_data(self.features, self.weights)
-        return res
 
     def downsample(self, nmax=10000, r_key="LOGR", nbins=40, rng=None, **kwargs):
         """Radially balanced downsampling"""
@@ -154,6 +189,28 @@ class FeatureSpaceContainer(object):
         res = DualContainer(features.columns, **kwargs)
         res.set_data(features, weights=weights)
         return res
+
+
+class DeepFeatureContainer(BaseContainer):
+    def __init__(self, data):
+        BaseContainer.__init__(self)
+        self.alldata = data
+        self.weights = pd.Series(data=np.ones(len(self.alldata)), name="WEIGHT")
+
+    @classmethod
+    def from_file(cls, fname, flagsel=True):
+
+        if ".fit" in fname:
+            _deep = fio.read(fname)
+        else:
+            _deep = pd.read_hdf(fname, key="data").to_records()
+
+        if flagsel:
+            inds = _deep["flags"] == 0
+            deep = _deep[inds]
+        else:
+            deep = _deep
+        return cls(deep)
 
 
 class DualContainer(object):
@@ -291,6 +348,9 @@ class DualContainer(object):
             "r_normalize": self.r_normalize
         }
         return info
+
+    def match_surfdens(self):
+        pass
 
 
 def _add(a, b):
@@ -612,6 +672,111 @@ class FeatureEmulator(object):
         # _state[-2] = neighbors.dist_metrics.EuclideanDistance()
         res.kde.tree_.__setstate__(_state)
         return res
+
+##########################################################################
+
+def construct_wide_container(dataloader, settings, nbins=100, nmax=5000, r_normalize=False):
+    fsc = FeatureSpaceContainer(dataloader)
+    fsc.construct_features(**settings)
+    # cont = fsc.to_dual(r_normalize=r_normalize)
+    cont_small = fsc.downsample(nbins=nbins, nmax=nmax, r_normalize=r_normalize)
+    cont_small.shuffle()
+    return cont_small
+
+
+def construct_deep_container(fname, settings, frac=1.):
+    fsc = DeepFeatureContainer.from_file(fname)
+    fsc.construct_features(**settings)
+    cont = fsc.to_dual()
+    cont.sample(frac=frac)
+    return cont
+
+
+##########################################################################
+
+def make_infodicts(wcr, wr, dc, dsmc, nsamples, cols, nchunks=30, bandwidth=0.2, sample_rmax=5,
+                   atol=1e-4, rtol=1e-4):
+    wr_emu = FeatureEmulator(wr)
+    wr_emu.train(kernel="tophat", bandwidth=bandwidth, atol=atol, rtol=rtol)
+
+    dsmc_emu = FeatureEmulator(dsmc)
+    dsmc_emu.train(kernel="tophat", bandwidth=bandwidth, atol=atol, rtol=rtol)
+
+    _sample = dsmc_emu.draw(num=nsamples)
+
+    rvals = wr_emu.draw(num=nsamples, rmax=sample_rmax)
+    sample = pd.merge(_sample.data, rvals.data, left_index=True, right_index=True)
+    sample_inds = partition(list(sample.index), nchunks)
+
+    infodicts = []
+    for i in np.arange(nchunks):
+        subsample = sample.loc[sample_inds[i]]
+
+        info = {
+            "sample": subsample,
+            "dc_cont": dc,
+            "wr_cont": wr,
+            "wcr_cont": wcr,
+            "cols": cols,
+            "bandwidth": bandwidth,
+            "atol": atol,
+            "rtol": rtol,
+        }
+        infodicts.append(info)
+    return sample, infodicts
+
+
+def run_scores(infodicts):
+    pool = mp.Pool(processes=len(infodicts))
+    try:
+        pp = pool.map_async(calc_scores, infodicts)
+        # the results here should be a list of score values
+        result = pp.get(86400)  # apparently this counters a bug in the exception passing in python.subprocess...
+    except KeyboardInterrupt:
+        print("Caught KeyboardInterrupt, terminating workers")
+        pool.terminate()
+        pool.join()
+    else:
+        pool.close()
+        pool.join()
+
+    dc_scores = []
+    wr_scores = []
+    wcr_scores = []
+    for res in result:
+        dc_scores.append(res[0])
+        wr_scores.append(res[1])
+        wcr_scores.append(res[2])
+
+    dc_scores = np.concatenate(dc_scores)
+    wr_scores = np.concatenate(wr_scores)
+    wcr_scores = np.concatenate(wcr_scores)
+
+    return dc_scores, wr_scores, wcr_scores
+
+
+def calc_scores(info):
+    dc_score, wr_score, wcr_score = [], [], []
+    try:
+        sample = info["sample"]
+
+        dc_emu = FeatureEmulator(info["dc_cont"])
+        dc_emu.train(kernel="tophat", bandwidth=info["bandwidth"], atol=info["atol"], rtol=info["rtol"])
+
+        wr_emu = FeatureEmulator(info["wr_cont"])
+        wr_emu.train(kernel="tophat", bandwidth=info["bandwidth"], atol=info["atol"], rtol=info["rtol"])
+
+        wcr_emu = FeatureEmulator(info["wcr_cont"])
+        wcr_emu.train(kernel="tophat", bandwidth=info["bandwidth"], atol=info["atol"], rtol=info["rtol"])
+
+        dc_score = dc_emu.score_samples(sample[info["cols"]["cols_dc"]])
+        wr_score = wr_emu.score_samples(sample[info["cols"]["cols_wr"]])
+        wcr_score = wcr_emu.score_samples(sample[info["cols"]["cols_wcr"]])
+
+    except KeyboardInterrupt:
+        pass
+
+    return dc_score, wr_score, wcr_score
 
 
 def to_buffer(arr):

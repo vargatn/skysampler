@@ -1,4 +1,4 @@
 
 
-from . import galsim_cluster
+from . import extgal
 
