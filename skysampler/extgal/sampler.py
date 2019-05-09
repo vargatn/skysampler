@@ -5,6 +5,8 @@ Galsim extension package based on LOS constructors
 
 import galsim
 import pickle
+import ngmix
+
 import numpy as np
 import fitsio as fio
 
@@ -76,31 +78,31 @@ def sky_value(config, base, value_type):
     if "FLUX" in col:
         col = "FLUX_" + str(base["band"]).upper()
     # TODO check this
-    if col == "SHEAR_G1" or col == "SHEAR_G2":
-        res = 0.
-        shear = base["shear_settings"]["value"]
-        direction = base["shear_settings"]["direction"]
+    # if col == "SHEAR_G1" or col == "SHEAR_G2":
+    #     res = 0.
+    #     shear = base["shear_settings"]["value"]
+    #     direction = base["shear_settings"]["direction"]
+    #
+        # if direction == "G1" and col == "SHEAR_G1":
+        #     res = shear
+        # elif direction == "G2" and col == "SHEAR_G2":
+        #     res = shear
+        # elif direction == "GT":
+        #     phi = np.arctan2(row["Y"], row["X"])
+        #     if col == "SHEAR_G1":
+        #         res = -1. * shear * np.cos(2. * phi)
+        #     elif col == "SHEAR_G2":
+        #         res = -1. * shear * np.sin(2. * phi)
+        # elif direction == "GX":
+        #     phi = np.arctan2(row["Y"], row["X"])
+        #     if col == "SHEAR_G1":
+        #         res = 1. * shear * np.cos(2. * phi)
+        #     elif col == "SHEAR_G2":
+        #         res = -1. * shear * np.sin(2. * phi)
 
-        if direction == "G1" and col == "SHEAR_G1":
-            res = shear
-        elif direction == "G2" and col == "SHEAR_G2":
-            res = shear
-        elif direction == "GT":
-            phi = np.arctan2(row["Y"], row["X"])
-            if col == "SHEAR_G1":
-                res = -1. * shear * np.cos(2. * phi)
-            elif col == "SHEAR_G2":
-                res = -1. * shear * np.sin(2. * phi)
-        elif direction == "GX":
-            phi = np.arctan2(row["Y"], row["X"])
-            if col == "SHEAR_G1":
-                res = 1. * shear * np.cos(2. * phi)
-            elif col == "SHEAR_G2":
-                res = -1. * shear * np.sin(2. * phi)
-
-    else:
-        icol = colnames.index(col)
-        res = float(row[icol])
+    # else:
+    icol = colnames.index(col)
+    res = float(row[icol])
 
     return res
 
@@ -110,3 +112,50 @@ def sky_tile_id(config, base, value_type):
 galsim.config.RegisterInputType('sky_sampler', galsim.config.InputLoader(SkySampler, file_scope=True))
 galsim.config.RegisterValueType('sky_value', sky_value, [float], input_type='sky_sampler')
 galsim.config.RegisterValueType('sky_tile_id', sky_tile_id, [int], input_type='sky_sampler')
+
+
+def _next_bdf_obj(config, base, ignore, gsparams, logger):
+
+    # Read next line from catalog
+    index, index_key = galsim.config.GetIndex(config, base)
+    ii = index - base["start_obj_num"]
+
+    sampler = galsim.config.GetInputObj('sky_sampler', config, base, 'sky_sampler')
+    sampler.safe_setup(base["tile_num"])
+
+    row = sampler.get_row(ii)
+    cols = sampler.get_columns()
+    base['_sky_row_data'] = row
+    base['_sky_sampler_index'] = ii
+    base['_sky_columns'] = cols
+
+    bdf_pars = np.zeros(7)
+    bdf_pars[2] = row["E1"]
+    bdf_pars[3] = row["E2"]
+    bdf_pars[4] = row["TSIZE"]
+    bdf_pars[5] = row["FRACDEV"]
+
+    bdf_pars[6] = row["FLUX_" + str(base["band"])]
+    galmaker = ngmix.gmix.GMixBDF(bdf_pars)
+    gs_profile = galmaker.make_galsim_object()
+
+    return gs_profile, True
+
+
+def _mock_bdf(config, base, ignore, gsparams, logger):
+
+    bdf_pars = np.zeros(7)
+    bdf_pars[2] = 0.2
+    bdf_pars[3] = 0.2
+    bdf_pars[4] = 1.5
+    bdf_pars[5] = 1.
+    bdf_pars[6] = 2000.
+    logger.info("Building GMixModel galaxy with bdf_pars: %s" % repr(bdf_pars))
+
+    galmaker = ngmix.gmix.GMixBDF(bdf_pars)
+    gs_profile = galmaker.make_galsim_object()
+
+    return gs_profile, True
+
+galsim.config.RegisterObjectType('MockBDF', _mock_bdf, "MockBDF")
+galsim.config.RegisterObjectType('BDF', _next_bdf_obj, "BDF")
