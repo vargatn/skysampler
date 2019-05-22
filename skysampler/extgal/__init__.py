@@ -19,5 +19,5 @@ conda install -c conda-forge galsim
 """
 
 from . import sampler
-from . import output
+# from . import output
 from . import object

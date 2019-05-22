@@ -5,7 +5,7 @@ import numpy as np
 import copy
 import fitsio as fio
 
-from cluster_pipeline.multiband_fits import MultibandFitsBuilder
+# from cluster_pipeline.multiband_fits import MultibandFitsBuilder
 
 from galsim.config.output import OutputBuilder
 

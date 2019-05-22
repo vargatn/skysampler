@@ -675,11 +675,11 @@ class FeatureEmulator(object):
 
 ##########################################################################
 
-def construct_wide_container(dataloader, settings, nbins=100, nmax=5000, r_normalize=False):
+def construct_wide_container(dataloader, settings, nbins=100, nmax=5000):
     fsc = FeatureSpaceContainer(dataloader)
     fsc.construct_features(**settings)
     # cont = fsc.to_dual(r_normalize=r_normalize)
-    cont_small = fsc.downsample(nbins=nbins, nmax=nmax, r_normalize=r_normalize)
+    cont_small = fsc.downsample(nbins=nbins, nmax=nmax, r_normalize=False)
     cont_small.shuffle()
     return cont_small
 

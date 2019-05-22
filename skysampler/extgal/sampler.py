@@ -60,6 +60,7 @@ class SkySampler(object):
 def sky_row(config, base, name):
     index, index_key = galsim.config.GetIndex(config, base)
     ii = index - base["start_obj_num"]
+    # print(ii, index)
 
     if base.get('_sky_sampler_index', None) != ii:
         sampler = galsim.config.GetInputObj('sky_sampler', config, base, name)
@@ -75,6 +76,7 @@ def sky_row(config, base, name):
 def sky_value(config, base, value_type):
     row, colnames = sky_row(config, base, value_type)
     col = galsim.config.ParseValue(config, 'col', base, str)[0]
+    # print(col)
     if "FLUX" in col:
         col = "FLUX_" + str(base["band"]).upper()
     # TODO check this
@@ -119,15 +121,19 @@ def _next_bdf_obj(config, base, ignore, gsparams, logger):
     # Read next line from catalog
     index, index_key = galsim.config.GetIndex(config, base)
     ii = index - base["start_obj_num"]
+    # print(ii)
 
-    sampler = galsim.config.GetInputObj('sky_sampler', config, base, 'sky_sampler')
-    sampler.safe_setup(base["tile_num"])
+    if base.get('_sky_sampler_index', None) != ii:
+        sampler = galsim.config.GetInputObj('sky_sampler', config, base, 'sky_sampler')
+        sampler.safe_setup(base["tile_num"])
 
-    row = sampler.get_row(ii)
-    cols = sampler.get_columns()
-    base['_sky_row_data'] = row
-    base['_sky_sampler_index'] = ii
-    base['_sky_columns'] = cols
+        row = sampler.get_row(ii)
+        cols = sampler.get_columns()
+        base['_sky_row_data'] = row
+        base['_sky_sampler_index'] = ii
+        base['_sky_columns'] = cols
+
+    row = base['_sky_row_data']
 
     bdf_pars = np.zeros(7)
     bdf_pars[2] = row["E1"]
@@ -135,15 +141,16 @@ def _next_bdf_obj(config, base, ignore, gsparams, logger):
     bdf_pars[4] = row["TSIZE"]
     bdf_pars[5] = row["FRACDEV"]
 
-    bdf_pars[6] = row["FLUX_" + str(base["band"])]
+    bdf_pars[6] = row["FLUX_" + str(base["band"]).upper()]
     galmaker = ngmix.gmix.GMixBDF(bdf_pars)
     gs_profile = galmaker.make_galsim_object()
 
-    return gs_profile, True
+    return gs_profile, False
 
 
 def _mock_bdf(config, base, ignore, gsparams, logger):
 
+    print("mock_bdf")
     bdf_pars = np.zeros(7)
     bdf_pars[2] = 0.2
     bdf_pars[3] = 0.2
@@ -157,5 +164,35 @@ def _mock_bdf(config, base, ignore, gsparams, logger):
 
     return gs_profile, True
 
+
+def _bdf_obj(config, base, ignore, gsparams, logger):
+    # print(gsparams)
+    # req = {"e1": float, "e2":float, "tsize":float, "fracdev":float, "flux": float}
+    # print(config["e1"])
+    # kwargs,safe = galsim.config.GetAllParams(config, base, req=req)
+
+#     # Read next line from catalog
+#     e1 = galsim.config.ParseValue(config, 'e1', base, str)[0]
+#     e2 = galsim.config.ParseValue(config, 'e2', base, str)[0]
+#     tsize = galsim.config.ParseValue(config, 'tsize', base, str)[0]
+#     fracdev = galsim.config.ParseValue(config, 'fracdev', base, str)[0]
+#     flux = galsim.config.ParseValue(config, 'flux', base, str)[0]
+#
+
+    # print(config["e1"])
+    # raise KeyboardInterrupt
+    bdf_pars = np.zeros(7)
+    bdf_pars[2] = gsparams["e1"]
+    bdf_pars[3] = gsparams["e2"]
+    bdf_pars[4] = gsparams["tsize"]
+    bdf_pars[5] = gsparams["fracdev"]
+    bdf_pars[6] = gsparams["flux"]
+    galmaker = ngmix.gmix.GMixBDF(bdf_pars)
+    gs_profile = galmaker.make_galsim_object()
+#
+    # return gs_profile, False
+
+
 galsim.config.RegisterObjectType('MockBDF', _mock_bdf, "MockBDF")
-galsim.config.RegisterObjectType('BDF', _next_bdf_obj, "BDF")
+galsim.config.RegisterObjectType('BDFCat', _next_bdf_obj, "BDFCat")
+galsim.config.RegisterObjectType('BDF', _bdf_obj, "BDF")
