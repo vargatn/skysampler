@@ -16,6 +16,8 @@ import sklearn.model_selection as modsel
 import sklearn.preprocessing as preproc
 import copy
 import sys
+import kdos #kde optimizer
+
 
 ENDIANS = {
     "little": "<",
@@ -215,7 +217,7 @@ class DeepFeatureContainer(BaseContainer):
 
 class DualContainer(object):
     """Contains features in normal and in transformed space"""
-    def __init__(self, columns=None, mean=None, sigma=None, r_normalize=False, qt_params=None, r_key="LOGR"):
+    def __init__(self, columns=None, mean=None, sigma=None, r_normalize=False, qt_params=None, r_key="LOGR", kde_transform=False, kde_trans_params=None):
         """
         One column Dataframes can be created by tab[["col"]]
         Parameters
@@ -232,6 +234,10 @@ class DualContainer(object):
         self.r_key = r_key
         self.qt_params = qt_params
         self.qt = None
+
+        self.kde_transform = kde_transform
+        self.kde_transformer = kdos.kde_transformer(kde_trans_params=kde_trans_params)
+
 
     def __getitem__(self, key):
         if self.mode == "xarr":
@@ -283,6 +289,10 @@ class DualContainer(object):
             }
             self.xarr[self.r_key] = self.qt.transform(self.xarr[self.r_key].values.reshape(-1, 1))
 
+        if self.kde_transform == True:
+            self.kde_transformer.initialize_transformer(xarr)
+            self.kde_transformer.optimize_tranformer(n_steps=10)
+
         self.shape = self.data.shape
         self.mode = "data"
 
@@ -298,6 +308,8 @@ class DualContainer(object):
         if self.r_normalize:
             res[self.r_key] = self.qt.transform(res[self.r_key].values.reshape(-1, 1))
 
+        if self.kde_transform == True:
+            res = self.kde_transformer.transform(res)
         return res
 
     def inverse_transform(self, arr):
@@ -307,6 +319,9 @@ class DualContainer(object):
             tab = pd.DataFrame(data=arr, columns=self.columns)
         else:
             tab = arr
+
+        if self.kde_transform == True:
+            tab = self.kde_transformer.inverse_transform(res)
 
         if self.r_normalize:
             tab[self.r_key] = self.qt.inverse_transform(tab[self.r_key].values.reshape(-1, 1))
