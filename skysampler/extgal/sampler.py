@@ -13,10 +13,10 @@ import fitsio as fio
 
 class SkySampler(object):
     _takes_rng = True
-    _req_params = {"mock_file_list": str,}
+    _req_params = {"mock_file_list": str, "icl_file_list": str}
     _opt_params = {}
     _single_params = []
-    def __init__(self, mock_file_list, rng=None):
+    def __init__(self, mock_file_list, icl_file_list, rng=None):
 
         with open(mock_file_list) as file:
             self.mock_file_list = file.readlines()
@@ -24,6 +24,12 @@ class SkySampler(object):
         self.itile = None
         self.mock = None
         self.ngal = None
+
+        if icl_file_list is not None:
+            with open(icl_file_list) as file:
+                self.icl_file_list = file.readlines()
+        else:
+            self.icl_file_list = None
 
     def get_row(self, index):
         return self.mock[index]
@@ -55,6 +61,9 @@ class SkySampler(object):
         self.itile = itile
         if self.mock is None:
             self.read_mock()
+
+
+
 
 
 def sky_row(config, base, name):
