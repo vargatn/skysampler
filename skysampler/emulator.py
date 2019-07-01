@@ -16,6 +16,11 @@ import sklearn.model_selection as modsel
 import sklearn.preprocessing as preproc
 import copy
 import sys
+from collections.abc import Iterable
+import scipy.interpolate as interp
+
+
+BADVAL = -9999
 
 ENDIANS = {
     "little": "<",
@@ -213,8 +218,231 @@ class DeepFeatureContainer(BaseContainer):
         return cls(deep)
 
 
+# TODO add GradientRescaling
+
+class GradientKDE(object):
+    _stretch_func = []
+    _xy_func = []
+    _yx_func = []
+    def __init__(self, top_scaler=None, rng=None):
+        self.top_scaler = top_scaler
+
+        if rng is None:
+            self.rng = np.random.RandomState()
+        else:
+            self.rng = rng
+
+    def set_data(self, data):
+        self.data = data
+
+        if self.top_scaler is None:
+            self.top_scaler = {
+                "std": self.data.std(axis=0),
+                "mean": self.data.mean(axis=0),
+                # Here goes PCA if necessary, but it does not really fit well with naive gradient KDE
+            }
+
+        # self._top_data = self._standardize(self.data, self.top_scaler)
+        self._top_data = self.data
+
+    def _top_kde(self, bandwidth=0.1, kernel="tophat", atol=1e-4, rtol=1e-4, breadth_first=False):
+        self.bandwidth = bandwidth
+        self.kernel = kernel
+        self.atol = atol
+        self.rtol = rtol
+        self.breadth_first = breadth_first
+
+        self.kde = neighbors.KernelDensity(bandwidth=self.bandwidth, atol=self.atol, rtol=self.rtol,
+                                           breadth_first=self.breadth_first)
+        self.kde.fit(self._top_data)
+
+    def _draw_top_sample(self, nsample=1000000):
+        self._top_sample = self.kde.sample(n_samples=nsample, random_state=self.rng)
+
+    def _calc_slices(self, ref_axes=None, nslices=1, nbins=100):
+        """Calculates slices"""
+
+        self.ref_axes = ref_axes
+        self.nslices = nslices
+        self.nbins = nbins
+        # pepare slices along reference axes
+        self.ref_edges = []
+        if self.ref_axes is not None:
+            if not isinstance(self.ref_axes, Iterable):
+                self.ref_axes = (self.ref_axes,)
+            for i, ax in enumerate(self.ref_axes):
+                self.ref_edges.append(np.histogram(self._top_sample[:, ax], bins=self.nslices)[1])
+
+        self._slices = []
+        self._slices_bin_edges = []
+        self._slices_bin_centers = []
+        self._ref_in_use = []
+        for i in np.arange(self._top_sample.shape[1]):
+
+            col = self._top_sample[:, i]
+            cmin = col.min()
+            cmax = col.max()
+            cbins = np.linspace(cmin, cmax, self.nbins)
+            if self.ref_axes is not None:
+                _slice = []
+                _edge = []
+                _cen = []
+                _ref = []
+                for j, ax in enumerate(self.ref_axes):
+                    if i != ax:
+                        _ref.append(True)
+                        refcol = self._top_sample[:, ax]
+                        for k in np.arange(len(self.ref_edges[j]) - 1):
+                            ind = (self.ref_edges[j][k] < refcol) & (refcol < self.ref_edges[j][k + 1])
+                            vals = col[ind]
+
+                            __slice, __edge = np.histogram(vals, cbins, density=True)
+                            _slice.append(__slice)
+                            _edge.append(__edge)
+                            _cen.append(self._get_bin_cen(__edge))
+                    else:
+                        _ref.append(False)
+                        __slice, __edge = np.histogram(self._top_sample[:, i], cbins, density=True)
+                        _slice.append(__slice)
+                        _edge.append(__edge)
+                        _cen.append(self._get_bin_cen(__edge))
+
+                self._slices.append(_slice)
+                self._slices_bin_edges.append(_edge)
+                self._slices_bin_centers.append(_cen)
+                self._ref_in_use.append(_ref)
+
+            else:
+                _slice, _edge = np.histogram(self._top_sample[:, i], cbins, density=True)
+                self._slices.append((_slice,))
+                self._slices_bin_edges.append((_edge,))
+                self._slices_bin_centers.append((self._get_bin_cen(_edge),))
+                self._ref_in_use.append((False,))
+
+    def _calc_gradient(self, window_size=None):
+        """estimates |f'| along each slice """
+
+        self._gradients = []
+        self._gradient_centers = []
+        for i, _slice in enumerate(self._slices):
+            _grad = []
+            _cens = []
+            for j, __slice in enumerate(_slice):
+                gvals = np.abs(np.diff(__slice))
+                if window_size is not None:
+                    gvals = self._smooth(gvals, window_size)
+                _grad.append(gvals)
+                _cens.append((self._slices_bin_centers[i][j][:-1] + np.diff(self._slices_bin_centers[i][j] / 2.)))
+
+            self._gradients.append(_grad)
+            self._gradient_centers.append(_cens)
+
+    def _collate_gradients(self, eta=1., tomographic_weights=None):
+        self._stretch = []
+        self._stretch_centers = []
+        self._stretch_func = []
+        self.eta = eta
+
+        if tomographic_weights is None:
+            _tw = []
+            for i in np.arange(len(self.ref_axes)):
+                _tw.append(np.ones(self.nslices))
+            self.tomographic_weights = _tw
+        else:
+            self.tomographic_weights = tomographic_weights
+
+        for i, _grad in enumerate(self._gradients):
+            _grad = np.array(_grad).T
+
+            _weigths = []
+            if self.ref_axes is not None:
+                for j in np.arange(len(self.ref_axes)):
+                    if self._ref_in_use[i][j]:
+                        _weigths.append(self.tomographic_weights[j])
+                    else:
+                        _weigths.append([1,])
+            else:
+                _weigths = np.array([1.,])
+            _weigths = np.concatenate(_weigths)
+
+            _stretch = self.eta * np.dot(_grad**2., _weigths[:, np.newaxis])
+            self._stretch.append(_stretch)
+            self._stretch_centers.append(self._gradient_centers[i][0])
+
+            xval = self._gradient_centers[i][0]
+            yval = _stretch[:, 0]
+            self._stretch_func.append(interp.interp1d(xval, yval,
+                                                      fill_value=0, bounds_error=False))
+
+    def _calc_deep_data(self, verbose=True):
+
+        colnames = list(self._top_data.columns)
+        self._deep_data = pd.DataFrame()
+        for i in np.arange(self._top_data.shape[1]):
+            col = self._top_data[colnames[i]]
+            isort = np.argsort(col)
+
+            colsort = col[isort].copy()
+            x_stretch = self._stretch_func[i](colsort)
+
+            _ycol = np.zeros(len(col))
+            rescol = np.zeros(len(col))
+            for j in np.arange(len(col)):
+                if verbose and (j % 1000 == 0):
+                    print(i, j)
+                _ycol[j] = colsort[j] + np.sum(x_stretch[:j])
+
+            _ycol = (_ycol - _ycol.mean()) / _ycol.std()
+
+            rescol[isort] = _ycol
+            self._deep_data[colnames[i]] = rescol
+
+            self._xy_func.append(interp.interp1d(col[isort], _ycol, fill_value=BADVAL, bounds_error=False))
+            self._yx_func.append(interp.interp1d(_ycol, col[isort], fill_value=BADVAL, bounds_error=False))
+
+    @staticmethod
+    def _smooth(vals, window_size):
+        window = np.ones(window_size)
+        window /= window.sum()
+        smoothvals = np.convolve(window, vals.copy(), mode="same")
+        return smoothvals
+
+    @staticmethod
+    def _standardize(data, scaler):
+        _data = (data.copy() - scaler["mean"]) / scaler["std"]
+        return _data
+
+    @staticmethod
+    def _inverse_standardize(data, scaler):
+        _data = data.copy() * scaler["std"] + scaler["mean"]
+
+    @staticmethod
+    def _get_bin_cen(edge):
+        cen = edge[:-1] + np.diff(edge) / 2.
+        return cen
+
+    def _build_deep_kde(self, bandwidth):
+        pass
+
+    def _calc_stretch(self, eta):
+        pass
+
+    def get_transform(self):
+        pass
+
+    def get_inverse_transform(self):
+        pass
+
+    def get_metapars(self):
+        pass
+
+
+
+
+
 class DualContainer(object):
     """Contains features in normal and in transformed space"""
+    # TODO remove the currently unused features
     def __init__(self, columns=None, mean=None, sigma=None, r_normalize=False, qt_params=None, r_key="LOGR"):
         """
         One column Dataframes can be created by tab[["col"]]
