@@ -217,9 +217,6 @@ class DeepFeatureContainer(BaseContainer):
             deep = _deep
         return cls(deep)
 
-
-# TODO add GradientRescaling
-
 class GradientKDE(object):
     _stretch_func = []
     _xy_func = []
@@ -232,32 +229,49 @@ class GradientKDE(object):
         else:
             self.rng = rng
 
-    def set_data(self, data):
+    def set_data(self, data, weights):
         self.data = data
+        self.weights = weights
 
         if self.top_scaler is None:
             self.top_scaler = {
                 "std": self.data.std(axis=0),
                 "mean": self.data.mean(axis=0),
-                # Here goes PCA if necessary, but it does not really fit well with naive gradient KDE
             }
 
-        # self._top_data = self._standardize(self.data, self.top_scaler)
-        self._top_data = self.data
+        self._top_data = self._standardize(self.data, self.top_scaler)
 
-    def _top_kde(self, bandwidth=0.1, kernel="tophat", atol=1e-4, rtol=1e-4, breadth_first=False):
+    def _build_top_kde(self, bandwidth=0.1, kernel="tophat", atol=1e-4, rtol=1e-4, breadth_first=False):
         self.bandwidth = bandwidth
         self.kernel = kernel
         self.atol = atol
         self.rtol = rtol
         self.breadth_first = breadth_first
 
-        self.kde = neighbors.KernelDensity(bandwidth=self.bandwidth, atol=self.atol, rtol=self.rtol,
+        self._top_kde = neighbors.KernelDensity(bandwidth=self.bandwidth, atol=self.atol, rtol=self.rtol,
                                            breadth_first=self.breadth_first)
-        self.kde.fit(self._top_data)
+        self._top_kde.fit(self._top_data, sample_weight=self.weights)
 
-    def _draw_top_sample(self, nsample=1000000):
-        self._top_sample = self.kde.sample(n_samples=nsample, random_state=self.rng)
+    def _build_deep_kde(self):
+        self._deep_kde = neighbors.KernelDensity(bandwidth=self.bandwidth, atol=self.atol, rtol=self.rtol,
+                                           breadth_first=self.breadth_first)
+        self._deep_kde.fit(self._deep_data, sample_weight=self.weights)
+
+    def draw_top_sample(self, nsample=1e6):
+        self._top_sample = self._top_kde.sample(n_samples=int(nsample), random_state=self.rng)
+        self.top_sample = pd.DataFrame(data=self._top_sample, columns=self.data.columns)
+        self.top_sample = self._inverse_standardize(self.top_sample, scaler=self.top_scaler)
+
+    def draw_deep_sample(self, nsample=1e6):
+        self._deep_sample_y = self._deep_kde.sample(n_samples=int(nsample), random_state=self.rng)
+
+        self._deep_sample_x = pd.DataFrame()
+        columns = list(self._deep_data.columns)
+        for i, col in enumerate(columns):
+            self._deep_sample_x[col] = self._yx_func[i](self._deep_sample_y[:, i])
+
+        self._deep_sample_x = self._filter_badval(self._deep_sample_x)
+        self.deep_sample = self._inverse_standardize(self._deep_sample_x, scaler=self.top_scaler)
 
     def _calc_slices(self, ref_axes=None, nslices=1, nbins=100):
         """Calculates slices"""
@@ -344,10 +358,13 @@ class GradientKDE(object):
         self.eta = eta
 
         if tomographic_weights is None:
-            _tw = []
-            for i in np.arange(len(self.ref_axes)):
-                _tw.append(np.ones(self.nslices))
-            self.tomographic_weights = _tw
+            if self.ref_axes is not None:
+                _tw = []
+                for i in np.arange(len(self.ref_axes)):
+                    _tw.append(np.ones(self.nslices))
+                self.tomographic_weights = _tw
+            else:
+                self.tomographic_weights = np.array([1.,])
         else:
             self.tomographic_weights = tomographic_weights
 
@@ -378,27 +395,46 @@ class GradientKDE(object):
 
         colnames = list(self._top_data.columns)
         self._deep_data = pd.DataFrame()
+        self._ycols = []
+        self._xcols = []
         for i in np.arange(self._top_data.shape[1]):
-            col = self._top_data[colnames[i]]
+            col = self._top_data[colnames[i]].values
             isort = np.argsort(col)
 
             colsort = col[isort].copy()
+            self._xcols.append(colsort)
             x_stretch = self._stretch_func[i](colsort)
 
             _ycol = np.zeros(len(col))
             rescol = np.zeros(len(col))
             for j in np.arange(len(col)):
-                if verbose and (j % 1000 == 0):
+                if verbose and (j % 10000 == 0):
                     print(i, j)
                 _ycol[j] = colsort[j] + np.sum(x_stretch[:j])
-
             _ycol = (_ycol - _ycol.mean()) / _ycol.std()
+
+            self._ycols.append(_ycol) 
 
             rescol[isort] = _ycol
             self._deep_data[colnames[i]] = rescol
 
             self._xy_func.append(interp.interp1d(col[isort], _ycol, fill_value=BADVAL, bounds_error=False))
             self._yx_func.append(interp.interp1d(_ycol, col[isort], fill_value=BADVAL, bounds_error=False))
+
+    def build_kde(self, bandwidth=0.1, eta=1., tomographic_weights=None, window_size=5,
+                  ref_axes=None, nslices=1, nbins=100, nsample_gradient=1e6,
+                  kernel="tophat", atol=1e-4, rtol=1e-4, breadth_first=False, verbose=True):
+
+        self._build_top_kde(bandwidth=bandwidth, kernel=kernel, atol=atol, rtol=rtol, breadth_first=breadth_first)
+        self.draw_top_sample(nsample=nsample_gradient)
+
+        self._calc_slices(ref_axes=ref_axes, nslices=nslices, nbins=nbins)
+        self._calc_gradient(window_size=window_size)
+        self._collate_gradients(eta=eta, tomographic_weights=tomographic_weights)
+
+        self._calc_deep_data(verbose=verbose)
+
+        self._build_deep_kde()
 
     @staticmethod
     def _smooth(vals, window_size):
@@ -415,16 +451,24 @@ class GradientKDE(object):
     @staticmethod
     def _inverse_standardize(data, scaler):
         _data = data.copy() * scaler["std"] + scaler["mean"]
+        return _data
 
     @staticmethod
     def _get_bin_cen(edge):
         cen = edge[:-1] + np.diff(edge) / 2.
         return cen
 
-    def _build_deep_kde(self, bandwidth):
-        pass
+    @staticmethod
+    def _filter_badval(table):
+        columns = table.columns
+        inds = np.ones(len(table), dtype=bool)
+        for i, col in enumerate(columns):
+            _ind = np.invert(np.isclose(table[col].values, np.ones(len(table)) * BADVAL))
+            inds *= _ind
 
-    def _calc_stretch(self, eta):
+        return table.copy()[inds]
+
+    def score(self):
         pass
 
     def get_transform(self):
@@ -437,13 +481,10 @@ class GradientKDE(object):
         pass
 
 
-
-
-
 class DualContainer(object):
     """Contains features in normal and in transformed space"""
     # TODO remove the currently unused features
-    def __init__(self, columns=None, mean=None, sigma=None, r_normalize=False, qt_params=None, r_key="LOGR"):
+    def __init__(self, columns=None, mean=None, sigma=None):
         """
         One column Dataframes can be created by tab[["col"]]
         Parameters
@@ -456,11 +497,6 @@ class DualContainer(object):
         self.mean = mean
         self.sigma = sigma
 
-        self.r_normalize = r_normalize
-        self.r_key = r_key
-        self.qt_params = qt_params
-        self.qt = None
-
     def __getitem__(self, key):
         if self.mode == "xarr":
             return self.xarr[key]
@@ -472,14 +508,6 @@ class DualContainer(object):
 
     def set_xarr(self, xarr):
         self.xarr = pd.DataFrame(columns=self.columns, data=xarr).reset_index(drop=True)
-
-        if self.r_normalize:
-            self.qt = preproc.QuantileTransformer(output_distribution="normal")
-            self.qt.set_params(**self.qt_params["params"])
-            self.qt.quantiles_ = self.qt_params["quantiles"]
-            self.qt.references_ = self.qt_params["references"]
-
-            self.xarr[self.r_key] = self.qt.inverse_transform(self.xarr[self.r_key].values.reshape(-1, 1))
 
         self.data = self.xarr * self.sigma + self.mean
         self.weights = pd.Series(np.ones(len(self.data)), name="WEIGHT")
@@ -501,16 +529,6 @@ class DualContainer(object):
 
         self.xarr = ((self.data - self.mean) / self.sigma)
 
-        if self.r_normalize:
-            self.qt = preproc.QuantileTransformer(output_distribution="normal")
-            self.qt.fit(self.xarr[self.r_key].values.reshape(-1, 1))
-            self.qt_params = {
-                "params": self.qt.get_params(),
-                "quantiles": self.qt.quantiles_,
-                "references": self.qt.references_,
-            }
-            self.xarr[self.r_key] = self.qt.transform(self.xarr[self.r_key].values.reshape(-1, 1))
-
         self.shape = self.data.shape
         self.mode = "data"
 
@@ -523,9 +541,6 @@ class DualContainer(object):
             tab = arr
 
         res = (tab - self.mean)/ self.sigma
-        if self.r_normalize:
-            res[self.r_key] = self.qt.transform(res[self.r_key].values.reshape(-1, 1))
-
         return res
 
     def inverse_transform(self, arr):
@@ -536,8 +551,6 @@ class DualContainer(object):
         else:
             tab = arr
 
-        if self.r_normalize:
-            tab[self.r_key] = self.qt.inverse_transform(tab[self.r_key].values.reshape(-1, 1))
         res = tab * self.sigma + self.mean
         return res
 
@@ -571,9 +584,6 @@ class DualContainer(object):
             "columns": self.columns,
             "mean": self.mean,
             "sigma": self.sigma,
-            "qt_params": self.qt_params,
-            "r_key": self.r_key,
-            "r_normalize": self.r_normalize
         }
         return info
 
