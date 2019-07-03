@@ -268,11 +268,55 @@ class GradientKDE(object):
         self._deep_sample_x = pd.DataFrame()
         columns = list(self._deep_data.columns)
         for i, col in enumerate(columns):
-            # self._deep_sample_x[col] = self._xy_func[i](self._deep_sample_y[:, i])
             self._deep_sample_x[col] = self._yx_func[i](self._deep_sample_y[:, i])
 
         self._deep_sample_x = self._filter_badval(self._deep_sample_x)
         self.deep_sample = self._inverse_standardize(self._deep_sample_x, scaler=self.top_scaler)
+
+    def score(self, sample):
+
+        _deep_sample = self.transform(sample)
+        _deep_log_scores = self._deep_kde.score_samples(_deep_sample.values)
+
+        _jac = self._calc_jacobian(sample)
+
+        _scores = _deep_log_scores + np.log(_jac)
+
+        return _scores
+
+    def _calc_jacobian(self, data):
+
+        _dxdy_jac = pd.DataFrame()
+        columns = list(self._deep_data.columns)
+        for i, col in enumerate(columns):
+            _dxdy_jac[col] = 1. / self._dydx[i](data[col])
+
+        _jac = np.abs((_dxdy_jac.values  * self.top_scaler["std"][np.newaxis, :]).sum(axis=1))
+
+        return _jac
+
+    def transform(self, data):
+
+        _top_data = self._standardize(data, self.top_scaler)
+
+        colnames = list(self.data.columns)
+        _deep_data = pd.DataFrame()
+        for i, col in enumerate(colnames):
+            _deep_data[col] = self._xy_func[i](_top_data[colnames[i]].values)
+
+        return _deep_data
+
+    def inverse_transform(self, deep_data):
+
+        _top_data = pd.DataFrame()
+        colnames = list(self.data.columns)
+        for i, col in enumerate(colnames):
+            _top_data[col] = self._yx_func[i](deep_data[colnames[i]].values)
+
+        _data = self._inverse_standardize(_top_data, self.top_scaler)
+
+        return _data
+
 
     def _calc_slices(self, ref_axes=None, nslices=1, nbins=100):
         """Calculates slices"""
@@ -397,6 +441,7 @@ class GradientKDE(object):
         self._deep_data = pd.DataFrame()
         self._ycols = []
         self._xcols = []
+        self._dydx = []
         for i in np.arange(self._top_data.shape[1]):
             col = self._top_data[colnames[i]].values
             _xcol = np.linspace(col.min(), col.max(), int(gridpoints))
@@ -417,6 +462,9 @@ class GradientKDE(object):
             self._xy_func.append(interp.interp1d(_xcol, _ycol, fill_value=BADVAL, bounds_error=False))
             self._yx_func.append(interp.interp1d(_ycol, _xcol, fill_value=BADVAL, bounds_error=False))
 
+            dydx = self._finite_difference(_xcol, _ycol)
+            self._dydx.append(interp.interp1d(_xcol, dydx, fill_value=BADVAL, bounds_error=False))
+
             self._deep_data[colnames[i]] = self._xy_func[i](self._top_data[colnames[i]].values)
 
     def build_kde(self, bandwidth=0.1, eta=1., tomographic_weights=None, window_size=5,
@@ -434,8 +482,24 @@ class GradientKDE(object):
 
         self._build_deep_kde()
 
-    def _calc_xy_gradient(self):
-        pass
+    @staticmethod
+    def _finite_difference(xcol, ycol):
+        derivs = np.zeros(len(xcol))
+        for i in np.arange(len(xcol)):
+            if i == 0:
+                dx = xcol[i + 1] - xcol[i]
+                dy = ycol[i + 1] - ycol[i]
+                derivs[i] = dy / dx
+
+            elif i == len(ycol) - 1:
+                dx = xcol[i] - xcol[i - 1]
+                dy = ycol[i] - ycol[i - 1]
+                derivs[i] = dy / dx
+            else:
+                dx = xcol[i + 1] - xcol[i - 1]
+                dy = ycol[i + 1] - ycol[i - 1]
+                derivs[i] = dy / dx
+        return derivs
 
     @staticmethod
     def _smooth(vals, window_size):
@@ -468,18 +532,6 @@ class GradientKDE(object):
             inds *= _ind
 
         return table.copy()[inds]
-
-    def score(self):
-        pass
-
-    def get_transform(self):
-        pass
-
-    def get_inverse_transform(self):
-        pass
-
-    def get_metapars(self):
-        pass
 
 
 class DualContainer(object):
