@@ -268,6 +268,7 @@ class GradientKDE(object):
         self._deep_sample_x = pd.DataFrame()
         columns = list(self._deep_data.columns)
         for i, col in enumerate(columns):
+            # self._deep_sample_x[col] = self._xy_func[i](self._deep_sample_y[:, i])
             self._deep_sample_x[col] = self._yx_func[i](self._deep_sample_y[:, i])
 
         self._deep_sample_x = self._filter_badval(self._deep_sample_x)
@@ -381,8 +382,7 @@ class GradientKDE(object):
             else:
                 _weigths = np.array([1.,])
             _weigths = np.concatenate(_weigths)
-
-            _stretch = self.eta * np.dot(_grad**2., _weigths[:, np.newaxis])
+            _stretch = self.eta * np.dot(_grad**2., _weigths[:, np.newaxis]) / _grad.shape[1]
             self._stretch.append(_stretch)
             self._stretch_centers.append(self._gradient_centers[i][0])
 
@@ -391,7 +391,7 @@ class GradientKDE(object):
             self._stretch_func.append(interp.interp1d(xval, yval,
                                                       fill_value=0, bounds_error=False))
 
-    def _calc_deep_data(self, verbose=True):
+    def _calc_deep_data(self, gridpoints=1e4):
 
         colnames = list(self._top_data.columns)
         self._deep_data = pd.DataFrame()
@@ -399,31 +399,29 @@ class GradientKDE(object):
         self._xcols = []
         for i in np.arange(self._top_data.shape[1]):
             col = self._top_data[colnames[i]].values
-            isort = np.argsort(col)
+            _xcol = np.linspace(col.min(), col.max(), int(gridpoints))
+            self._xcols.append(_xcol)
 
-            colsort = col[isort].copy()
-            self._xcols.append(colsort)
-            x_stretch = self._stretch_func[i](colsort)
+            x_stretch = self._stretch_func[i](_xcol)
 
-            _ycol = np.zeros(len(col))
-            rescol = np.zeros(len(col))
-            for j in np.arange(len(col)):
-                if verbose and (j % 10000 == 0):
-                    print(i, j)
-                _ycol[j] = colsort[j] + np.sum(x_stretch[:j])
-            _ycol = (_ycol - _ycol.mean()) / _ycol.std()
+            _ycol = np.zeros(len(_xcol))
+            for j in np.arange(len(_xcol)):
+                _ycol[j] = _xcol[j] + np.sum(x_stretch[:j])
 
-            self._ycols.append(_ycol) 
+            func = interp.interp1d(_xcol, _ycol, fill_value=BADVAL, bounds_error=False)
+            _tmp_data = func(col)
+            _ycol = (_ycol - _tmp_data.mean()) / _tmp_data.std()
 
-            rescol[isort] = _ycol
-            self._deep_data[colnames[i]] = rescol
+            self._ycols.append(_ycol)
 
-            self._xy_func.append(interp.interp1d(col[isort], _ycol, fill_value=BADVAL, bounds_error=False))
-            self._yx_func.append(interp.interp1d(_ycol, col[isort], fill_value=BADVAL, bounds_error=False))
+            self._xy_func.append(interp.interp1d(_xcol, _ycol, fill_value=BADVAL, bounds_error=False))
+            self._yx_func.append(interp.interp1d(_ycol, _xcol, fill_value=BADVAL, bounds_error=False))
+
+            self._deep_data[colnames[i]] = self._xy_func[i](self._top_data[colnames[i]].values)
 
     def build_kde(self, bandwidth=0.1, eta=1., tomographic_weights=None, window_size=5,
                   ref_axes=None, nslices=1, nbins=100, nsample_gradient=1e6,
-                  kernel="tophat", atol=1e-4, rtol=1e-4, breadth_first=False, verbose=True):
+                  kernel="tophat", atol=1e-4, rtol=1e-4, breadth_first=False, gridpoints=1e4):
 
         self._build_top_kde(bandwidth=bandwidth, kernel=kernel, atol=atol, rtol=rtol, breadth_first=breadth_first)
         self.draw_top_sample(nsample=nsample_gradient)
@@ -432,9 +430,12 @@ class GradientKDE(object):
         self._calc_gradient(window_size=window_size)
         self._collate_gradients(eta=eta, tomographic_weights=tomographic_weights)
 
-        self._calc_deep_data(verbose=verbose)
+        self._calc_deep_data(gridpoints=gridpoints)
 
         self._build_deep_kde()
+
+    def _calc_xy_gradient(self):
+        pass
 
     @staticmethod
     def _smooth(vals, window_size):
