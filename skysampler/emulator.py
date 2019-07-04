@@ -229,9 +229,12 @@ class GradientKDE(object):
         else:
             self.rng = rng
 
-    def set_data(self, data, weights):
+    def set_data(self, data, weights=None):
         self.data = data
+
         self.weights = weights
+        if self.weights is None:
+            self.weights = np.ones(len(data))
 
         if self.top_scaler is None:
             self.top_scaler = {
@@ -276,24 +279,27 @@ class GradientKDE(object):
     def score(self, sample):
 
         _deep_sample = self.transform(sample)
-        _deep_log_scores = self._deep_kde.score_samples(_deep_sample.values)
+        self._deep_log_scores = self._deep_kde.score_samples(_deep_sample.values)
 
-        _jac = self._calc_jacobian(sample)
+        _jac = self._calc_jacobian(_deep_sample)
 
-        _scores = _deep_log_scores + np.log(_jac)
+        _scores = self._deep_log_scores + np.log(_jac)
 
         return _scores
 
     def _calc_jacobian(self, data):
-
-        _dxdy_jac = pd.DataFrame()
+        self.__jac = pd.DataFrame()
         columns = list(self._deep_data.columns)
         for i, col in enumerate(columns):
-            _dxdy_jac[col] = 1. / self._dydx[i](data[col])
+            self.__jac[col] = 1. / self._dxdy[i](data[col])
+        self._tmp = self.__jac
 
-        _jac = np.abs((_dxdy_jac.values  * self.top_scaler["std"][np.newaxis, :]).sum(axis=1))
+        self._jac = np.abs(np.product(self.__jac.values / self.top_scaler["std"][np.newaxis, :], axis=1))
 
-        return _jac
+        # self._jac = np.product(self.__jac.values, axis=1)
+        # self._jac = self.__jac.values[:, 0]
+
+        return self._jac
 
     def transform(self, data):
 
@@ -405,7 +411,7 @@ class GradientKDE(object):
         if tomographic_weights is None:
             if self.ref_axes is not None:
                 _tw = []
-                for i in np.arange(len(self.ref_axes)):
+                for _ in np.arange(len(self.ref_axes)):
                     _tw.append(np.ones(self.nslices))
                 self.tomographic_weights = _tw
             else:
@@ -442,6 +448,7 @@ class GradientKDE(object):
         self._ycols = []
         self._xcols = []
         self._dydx = []
+        self._dxdy = []
         for i in np.arange(self._top_data.shape[1]):
             col = self._top_data[colnames[i]].values
             _xcol = np.linspace(col.min(), col.max(), int(gridpoints))
@@ -464,6 +471,9 @@ class GradientKDE(object):
 
             dydx = self._finite_difference(_xcol, _ycol)
             self._dydx.append(interp.interp1d(_xcol, dydx, fill_value=BADVAL, bounds_error=False))
+
+            dxdy = self._finite_difference(_ycol, _xcol)
+            self._dxdy.append(interp.interp1d(_ycol, dxdy, fill_value=BADVAL, bounds_error=False))
 
             self._deep_data[colnames[i]] = self._xy_func[i](self._top_data[colnames[i]].values)
 
