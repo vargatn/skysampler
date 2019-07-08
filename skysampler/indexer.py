@@ -717,12 +717,12 @@ class IndexedDataContainer(object):
 
 
 class MultiDataLoader(object):
-    def __init__(self, fnames):
+    def __init__(self, fnames, force_target):
         self.fnames = fnames
 
-        self._get_info()
+        self._get_info(force_target)
 
-    def _get_info(self):
+    def _get_info(self, force_target):
         pp = pickle.load(open(self.fnames[0], "rb"))
 
         self.rcens = pp.rcens.copy()
@@ -731,7 +731,10 @@ class MultiDataLoader(object):
         self.target_nrow = pp.target["nrow"]
         self.nrbins = len(pp.numprof)
 
-        self.target = TargetData.from_dict(pp.target)
+        if force_target:
+            self.target = force_target
+        else:
+            self.target = TargetData.from_dict(pp.target)
         self.survey = pp.survey
 
     def collate_samples(self):
