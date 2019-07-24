@@ -44,6 +44,11 @@ def get_angle(num, rng):
     return angle
 
 
+def weighted_mean(values, weights):
+    average = np.average(values, axis=0, weights=weights)
+    return average
+
+
 def weighted_std(values, weights):
     """
     Return the weighted average and standard deviation.
@@ -62,7 +67,7 @@ class BaseContainer(object):
         self.features = None
         self.weights = None
 
-    def construct_features(self, columns, limits=None, logs=None):
+    def construct_features(self, columns, limits=None, logs=None, **kwargs):
         self.columns = columns
         self.limits = limits
         self.logs = logs
@@ -217,10 +222,12 @@ class DeepFeatureContainer(BaseContainer):
             deep = _deep
         return cls(deep)
 
+
 class GradientKDE(object):
     _stretch_func = []
     _xy_func = []
     _yx_func = []
+    settings = None
     def __init__(self, top_scaler=None, rng=None):
         self.top_scaler = top_scaler
 
@@ -430,9 +437,17 @@ class GradientKDE(object):
                     else:
                         _weigths.append([1,])
             else:
-                _weigths = np.array([1.,])
+                _weigths = np.array([[1.,],])
+
             _weigths = np.concatenate(_weigths)
-            _stretch = self.eta * np.dot(_grad**2., _weigths[:, np.newaxis]) / _grad.shape[1]
+
+            val = np.dot(_grad**2., _weigths[:, np.newaxis]) / _grad.shape[1]
+
+            if np.iterable(self.eta):
+                eta = self.eta[i]
+            else:
+                eta = self.eta
+            _stretch = eta * val
             self._stretch.append(_stretch)
             self._stretch_centers.append(self._gradient_centers[i][0])
 
@@ -664,6 +679,64 @@ _OPERATORS = {
     "+": _add,
     "-": _subtr,
 }
+
+
+class TomographicEyeballer(object):
+    def __init__(self, containers, nbins=100, colors=None, labels=None, loc=None):
+        self.containers = containers
+        self.columns = self.containers[0].columns
+        self.nbins = nbins
+
+        self.loc=loc
+        self.labels = labels
+        self.colors = colors
+        if self.colors is None:
+            arr = np.linspace(0, 1, len(self.containers))
+            self.colors = plt.cm.cool(arr)
+
+    def _get_figure(self):
+        num = len(self.columns) - 1
+        nrows = int(np.ceil(np.sqrt(num)))
+        ncols = int(np.ceil(np.sqrt(num)))
+        xsize = 5 * nrows
+        ysize = 4 * ncols
+        fig, axarr = plt.subplots(nrows=ncols, ncols=nrows, figsize=(xsize, ysize))
+        fig.subplots_adjust(wspace=0.3, hspace=0.3)
+        faxarr = axarr.flatten()
+        for i, ax in enumerate(faxarr):
+            #             if i < len(columns):
+            #                 faxarr[i].set_title(columns[i])
+            if i >= len(self.columns):
+                faxarr[i].axis("off")
+        return fig, axarr
+
+    def _get_bins(self):
+        self.bin_edges = []
+        for i, col in enumerate(self.columns):
+            xmin = self.containers[0][col].min()
+            xmax = self.containers[0][col].max()
+            edges = np.linspace(xmin, xmax, self.nbins)
+            self.bin_edges.append(edges)
+
+    def plot_marginals(self):
+        self._get_bins()
+        fig, axarr = self._get_figure()
+        faxarr = axarr.flatten()[:len(self.columns)]
+        for i, (col, ax) in enumerate(zip(self.columns, faxarr)):
+            for j, cont in enumerate(self.containers):
+
+                label = None
+                if self.labels is not None:
+                    label = self.labels[j]
+                ax.hist(cont[col], bins=self.bin_edges[i], density=True, histtype="step",
+                        label=label, color=self.colors[j])
+
+            ax.set_xlabel(col)
+            ax.set_ylabel("p.d.f")
+            ax.grid(ls=":")
+            if self.labels is not None:
+                ax.legend(loc=self.loc)
+
 
 class MultiEyeballer(object):
     """
@@ -982,7 +1055,17 @@ def construct_wide_container(dataloader, settings, nbins=100, nmax=5000):
     # cont = fsc.to_dual(r_normalize=r_normalize)
     cont_small = fsc.downsample(nbins=nbins, nmax=nmax,)
     cont_small.shuffle()
-    return cont_small
+    settings = copy.copy(settings)
+    settings.update({"container": cont_small})
+    return settings
+
+
+def construct_wide_kde(settings):
+    cont = settings["container"]
+    emu = GradientKDE()
+    emu.set_data(cont.data, cont.weights)
+    emu.build_kde(**settings["emulator"])
+    return emu
 
 
 def construct_deep_container(fname, settings, frac=1.):
@@ -990,23 +1073,30 @@ def construct_deep_container(fname, settings, frac=1.):
     fsc.construct_features(**settings)
     cont = fsc.to_dual()
     cont.sample(frac=frac)
-    return cont
+    settings = copy.copy(settings)
+    settings.update({"container": cont})
+    return settings
 
+def construct_deep_kde(settings):
+    cont = settings["container"]
+    emu = GradientKDE()
+    emu.set_data(cont.data, cont.weights)
+    emu.build_kde(**settings["emulator"])
+    return emu
 
 ##########################################################################
 
-def make_infodicts(wcr, wr, dc, dsmc, nsamples, cols, nchunks=30, bandwidth=0.2, sample_rmax=5,
-                   atol=1e-4, rtol=1e-4):
-    wr_emu = FeatureEmulator(wr)
-    wr_emu.train(kernel="tophat", bandwidth=bandwidth, atol=atol, rtol=rtol)
 
-    dsmc_emu = FeatureEmulator(dsmc)
-    dsmc_emu.train(kernel="tophat", bandwidth=bandwidth, atol=atol, rtol=rtol)
+def make_infodicts(wcr_settings, wr_settings, dc_settings, dsmc_settings,
+                   nsamples, cols, nchunks):
 
-    _sample = dsmc_emu.draw(num=nsamples)
+    dsmc_emu =  construct_deep_kde(dsmc_settings)
+    wr_emu = construct_deep_kde(wr_settings)
 
-    rvals = wr_emu.draw(num=nsamples, rmax=sample_rmax)
-    sample = pd.merge(_sample.data, rvals.data, left_index=True, right_index=True)
+    dsmc_emu.draw_deep_sample(nsample=nsamples)
+    wr_emu.draw_deep_sample(nsample=nsamples)
+
+    sample = pd.merge(dsmc_emu.deep_sample, wr_emu.deep_sample, left_index=True, right_index=True)
     sample_inds = partition(list(sample.index), nchunks)
 
     infodicts = []
@@ -1015,16 +1105,45 @@ def make_infodicts(wcr, wr, dc, dsmc, nsamples, cols, nchunks=30, bandwidth=0.2,
 
         info = {
             "sample": subsample,
-            "dc_cont": dc,
-            "wr_cont": wr,
-            "wcr_cont": wcr,
+            "dc_settings": dc_settings,
+            "wr_settings": wr_settings,
+            "wcr_settings": wcr_settings,
             "cols": cols,
-            "bandwidth": bandwidth,
-            "atol": atol,
-            "rtol": rtol,
         }
         infodicts.append(info)
     return sample, infodicts
+
+
+# def make_infodicts_legacy(wcr, wr, dc, dsmc, nsamples, cols, nchunks=30, bandwidth=0.2, sample_rmax=5,
+#                    atol=1e-4, rtol=1e-4):
+#     wr_emu = FeatureEmulator(wr)
+#     wr_emu.train(kernel="tophat", bandwidth=bandwidth, atol=atol, rtol=rtol)
+#
+#     dsmc_emu = FeatureEmulator(dsmc)
+#     dsmc_emu.train(kernel="tophat", bandwidth=bandwidth, atol=atol, rtol=rtol)
+#
+#     _sample = dsmc_emu.draw(num=nsamples)
+#
+#     rvals = wr_emu.draw(num=nsamples, rmax=sample_rmax)
+#     sample = pd.merge(_sample.data, rvals.data, left_index=True, right_index=True)
+#     sample_inds = partition(list(sample.index), nchunks)
+#
+#     infodicts = []
+#     for i in np.arange(nchunks):
+#         subsample = sample.loc[sample_inds[i]]
+#
+#         info = {
+#             "sample": subsample,
+#             "dc_cont": dc,
+#             "wr_cont": wr,
+#             "wcr_cont": wcr,
+#             "cols": cols,
+#             "bandwidth": bandwidth,
+#             "atol": atol,
+#             "rtol": rtol,
+#         }
+#         infodicts.append(info)
+#     return sample, infodicts
 
 
 def run_scores(infodicts):
@@ -1061,18 +1180,13 @@ def calc_scores(info):
     try:
         sample = info["sample"]
 
-        dc_emu = FeatureEmulator(info["dc_cont"])
-        dc_emu.train(kernel="tophat", bandwidth=info["bandwidth"], atol=info["atol"], rtol=info["rtol"])
+        dc_emu = construct_deep_kde(info["dc_settings"])
+        wr_emu = construct_deep_kde(info["wr_settings"])
+        wcr_emu = construct_deep_kde(info["wcr_settings"])
 
-        wr_emu = FeatureEmulator(info["wr_cont"])
-        wr_emu.train(kernel="tophat", bandwidth=info["bandwidth"], atol=info["atol"], rtol=info["rtol"])
-
-        wcr_emu = FeatureEmulator(info["wcr_cont"])
-        wcr_emu.train(kernel="tophat", bandwidth=info["bandwidth"], atol=info["atol"], rtol=info["rtol"])
-
-        dc_score = dc_emu.score_samples(sample[info["cols"]["cols_dc"]])
-        wr_score = wr_emu.score_samples(sample[info["cols"]["cols_wr"]])
-        wcr_score = wcr_emu.score_samples(sample[info["cols"]["cols_wcr"]])
+        dc_score = dc_emu.score(sample[info["cols"]["cols_dc"]])
+        wr_score = wr_emu.score(sample[info["cols"]["cols_wr"]])
+        wcr_score = wcr_emu.score(sample[info["cols"]["cols_wcr"]])
 
     except KeyboardInterrupt:
         pass
@@ -1349,126 +1463,3 @@ class CompositeDraw(object):
         res.set_data(chunks)
         return res
 
-
-
-
-class PowerKDE(object): # FIXME this should be inhaerited from a sklearn class
-    def __init__(self):
-        """This class should have a """
-        pass
-
-
-    def score(self):
-        """This should be the radially balanced version of the normal score, with the notation that the first column is always radius..."""
-        pass
-
-
-
-
-
-##############################################################
-
-
-
-# class ConstructMock(object):
-#     """TODO Construct a detailed Line-of-Sight based on the emulated information"""
-#     def __init__(self, bcg_feature, gal_feature, rng=None):
-#         self.bcg_feature = bcg_feature
-#         self.gal_feature = gal_feature
-#
-#         if rng is None:
-#             self.rng = np.random.RandomState()
-#         else:
-#             self.rng = rng
-#
-#     def train(self):
-#         self.bcg_kde = FeatureEmulator(self.bcg_feature, rng=self.rng)
-#         self.bcg_kde.train()
-#
-#         self.gal_kde = FeatureEmulator(self.gal_feature, rng=self.rng)
-#         self.gal_kde.train()
-#
-#     def create_table(self, mag_to_flux):
-#         """
-#         Create a rectangular image with Fluxes,
-#         RA, DEC, Flux (g, r, i, z), size, |g|,
-#
-#         add metadata for the details of what
-#
-#         Write it to Pandas DataFrame to HDF5 file
-#         """
-#
-#         # draw random profile
-#         gal_num = self.gal_feature.abs_profile.sum()
-#         gals = self.gal_kde.draw(gal_num, expand=True, linear=True)
-#         gals = pd.DataFrame(data=gals, columns=self.gal_feature.features.columns)
-#
-#         bcg = self.bcg_kde.draw(1, expand=True, linear=True)
-#         bcg = pd.DataFrame(data=bcg, columns=self.bcg_feature.features.columns)
-#         bcg["DIST"] = 0
-#
-#         self.mock = pd.concat((bcg, gals))
-#         self.mock = self.draw_pos(self.mock)
-#         self.mock = self.add_flux(self.mock, mag_to_flux)
-#
-#     def draw_pos(self, mock):
-#         """Adds RA DEC position to mock data"""
-#         angles = self.rng.uniform(0, 2 * np.pi, len(mock))
-#         mock["RA"] = mock["DIST"] * np.cos(angles)
-#         mock["DEC"] = mock["DIST"] * np.sin(angles)
-#         return mock
-#
-#     def add_flux(self, mock, mag_to_flux):
-#         for i, row in enumerate(mag_to_flux):
-#             mag = mock[row[1][0]].copy()
-#             if row[2] == "+":
-#                 for val in row[1][1:]:
-#                     mag += mock[val]
-#             elif row[2] == "-":
-#                 for val in row[1][1:]:
-#                     mag -= mock[val]
-#
-#             mock[row[0]] = 10.**((30. - mag) / 2.5)
-#         return mock
-#
-#     def write_mock(self, fname):
-#         self.mock.to_hdf(fname, key="data")
-#
-#
-
-class RejectionSampler(object):
-    def __init__(self):
-        pass
-
-
-class DistanceClassifier(object):
-    """TODO Classify objects into cluster or field redshift based on priors"""
-    def __init__(self):
-        pass
-
-    def classify(self):
-        pass
-
-    def write(self):
-        pass
-
-    def load(self):
-        pass
-
-
-class ConstructLOS(object):
-    """TODO Construct a detailed Line-of-Sight based on the emulated information"""
-    def __init__(self):
-        pass
-
-    def draw(self):
-        pass
-
-    def write(self):
-        pass
-
-    def load(self):
-        pass
-
-    def create_lostable(self):
-        pass
