@@ -561,7 +561,6 @@ class GradientKDE(object):
 
 class DualContainer(object):
     """Contains features in normal and in transformed space"""
-    # TODO remove the currently unused features
     def __init__(self, columns=None, mean=None, sigma=None):
         """
         One column Dataframes can be created by tab[["col"]]
@@ -600,10 +599,9 @@ class DualContainer(object):
             self.weights = pd.Series(np.ones(len(self.data)), name="WEIGHT")
             # self.weights["WEIGHT"] =
 
-        # print(self.weights.shape)
-        # print(self.data.shape)
-        self.mean = np.average(self.data, axis=0, weights=self.weights)
-        self.sigma = weighted_std(self.data, weights=self.weights)
+        if (self.mean is None) and (self.sigma is None):
+            self.mean = np.average(self.data, axis=0, weights=self.weights)
+            self.sigma = weighted_std(self.data, weights=self.weights)
 
         self.xarr = ((self.data - self.mean) / self.sigma)
 
@@ -961,9 +959,12 @@ class MultiEyeballer(object):
 
 
 # This is just a standard function
-class FeatureEmulator(object):
+class NaiveKDE(object):
     def __init__(self, container, rng=None):
-        """This is just the packaged version of the KDE"""
+        """
+        This is just the packaged version of the KDE
+        It assumes that the data to be density estimated is int he .xarr attribute of the DualContainer...
+        """
         self.container = container
         self.kde = None
 
@@ -981,28 +982,28 @@ class FeatureEmulator(object):
 
     def draw(self, num, rmin=None, rmax=None, rcol="LOGR", mode="data"):
         """draws random samples from KDE maximum radius"""
-        res = DualContainer(**self.container.get_meta())
+        self.res = DualContainer(**self.container.get_meta())
         _res = self.kde.sample(n_samples=int(num), random_state=self.rng)
-        res.set_xarr(_res)
+        self.res.set_xarr(_res)
 
         if (rmin is not None) or (rmax is not None):
             if rmin is None:
-                rmin = res.data[rcol].min()
+                rmin = self.res.data[rcol].min()
 
             if rmax is None:
-                rmax = res.data[rcol].max()
+                rmax = self.res.data[rcol].max()
 
             # these are the indexes to replace, not the ones to keep...
-            inds = (res.data[rcol] > rmax) | (res.data[rcol] < rmin)
+            inds = (self.res.data[rcol] > rmax) | (self.res.data[rcol] < rmin)
             while inds.sum():
             # print(inds.sum())
                 vals = self.kde.sample(n_samples=int(inds.sum()), random_state=self.rng)
                 _res[inds, :] = vals
-                res.set_xarr(_res)
-                inds = (res.data[rcol] > rmax) | (res.data[rcol] < rmin)
+                self.res.set_xarr(_res)
+                inds = (self.res.data[rcol] > rmax) | (self.res.data[rcol] < rmin)
 
-        res.set_mode(mode)
-        return res
+        self.res.set_mode(mode)
+        return self.res
 
     def score_samples(self, arr):
         """Assuming that arr is in the data format"""
@@ -1011,41 +1012,41 @@ class FeatureEmulator(object):
         res = self.kde.score_samples(arr)
         return res
 
-    def to_dict(self):
-
-
-        # Memory view of training data cannot be pickled and is not strictly necessary
-        _state = list(self.kde.tree_.__getstate__())
-        sample_weights = copy.deepcopy(np.array(_state[-1]))
-
-
-        # we have to change the state so that it can be pickled, it will be reconustructed later
-        state = copy.deepcopy(_state[:-1])
-        state.append(None)
-
-        self.kde.tree_.__setstate__(state)
-        res = {
-            "bandwidth": self.bandwidth,
-            "container_meta": self.container.get_meta(),
-            "kde": copy.deepcopy(self.kde),
-            "sample_weights": sample_weights,
-        }
-        # we have to reset the original state
-        self.kde.tree_.__setstate__(_state)
-        # print(res["sample_weights"])
-        # print(np.array(self.kde.tree_.__getstate__()[-1]))
-        return res
-
-    @classmethod
-    def from_dict(cls, info):
-        container = DualContainer(**info["container_meta"])
-        res = cls(container)
-        res.kde = info["kde"]
-        _state = list(res.kde.tree_.__getstate__())
-        _state[-1] = info["sample_weights"]
-        # _state[-2] = neighbors.dist_metrics.EuclideanDistance()
-        res.kde.tree_.__setstate__(_state)
-        return res
+    # def to_dict(self):
+    #
+    #
+    #     # Memory view of training data cannot be pickled and is not strictly necessary
+    #     _state = list(self.kde.tree_.__getstate__())
+    #     sample_weights = copy.deepcopy(np.array(_state[-1]))
+    #
+    #
+    #     # we have to change the state so that it can be pickled, it will be reconustructed later
+    #     state = copy.deepcopy(_state[:-1])
+    #     state.append(None)
+    #
+    #     self.kde.tree_.__setstate__(state)
+    #     res = {
+    #         "bandwidth": self.bandwidth,
+    #         "container_meta": self.container.get_meta(),
+    #         "kde": copy.deepcopy(self.kde),
+    #         "sample_weights": sample_weights,
+    #     }
+    #     # we have to reset the original state
+    #     self.kde.tree_.__setstate__(_state)
+    #     # print(res["sample_weights"])
+    #     # print(np.array(self.kde.tree_.__getstate__()[-1]))
+    #     return res
+    #
+    # @classmethod
+    # def from_dict(cls, info):
+    #     container = DualContainer(**info["container_meta"])
+    #     res = cls(container)
+    #     res.kde = info["kde"]
+    #     _state = list(res.kde.tree_.__getstate__())
+    #     _state[-1] = info["sample_weights"]
+    #     # _state[-2] = neighbors.dist_metrics.EuclideanDistance()
+    #     res.kde.tree_.__setstate__(_state)
+    #     return res
 
 ##########################################################################
 
@@ -1087,16 +1088,44 @@ def construct_deep_kde(settings):
 ##########################################################################
 
 
-def make_infodicts(wcr_settings, wr_settings, dc_settings, dsmc_settings,
-                   nsamples, cols, nchunks):
+# def make_infodicts(wcr_settings, wr_settings, dc_settings, dsmc_settings,
+#                    nsamples, cols, nchunks):
+#
+#     dsmc_emu =  construct_deep_kde(dsmc_settings)
+#     wr_emu = construct_deep_kde(wr_settings)
+#
+#     dsmc_emu.draw_deep_sample(nsample=nsamples)
+#     wr_emu.draw_deep_sample(nsample=nsamples)
+#
+#     sample = pd.merge(dsmc_emu.deep_sample, wr_emu.deep_sample, left_index=True, right_index=True)
+#     sample_inds = partition(list(sample.index), nchunks)
+#
+#     infodicts = []
+#     for i in np.arange(nchunks):
+#         subsample = sample.loc[sample_inds[i]]
+#
+#         info = {
+#             "sample": subsample,
+#             "dc_settings": dc_settings,
+#             "wr_settings": wr_settings,
+#             "wcr_settings": wcr_settings,
+#             "cols": cols,
+#         }
+#         infodicts.append(info)
+#     return sample, infodicts
 
-    dsmc_emu =  construct_deep_kde(dsmc_settings)
-    wr_emu = construct_deep_kde(wr_settings)
+def make_naive_infodicts(wcr_cont, wr_cont, dc_cont, dsmc_cont,
+                         nsamples, cols, nchunks, bandwidth=0.1,
+                         rmin=None, rmax=None, rcol="LOGR"):
 
-    dsmc_emu.draw_deep_sample(nsample=nsamples)
-    wr_emu.draw_deep_sample(nsample=nsamples)
+    dsmc_emu = NaiveKDE(dsmc_cont)
+    dsmc_emu.train(bandwidth=bandwidth)
+    wr_emu = NaiveKDE(wr_cont)
+    wr_emu.train(bandwidth=bandwidth)
 
-    sample = pd.merge(dsmc_emu.deep_sample, wr_emu.deep_sample, left_index=True, right_index=True)
+    dsmc_emu.draw(nsamples)
+    wr_emu.draw(nsamples, rmin=rmin, rmax=rmax, rcol=rcol)
+    sample = pd.merge(dsmc_emu.res.data, wr_emu.res.data, left_index=True, right_index=True)
     sample_inds = partition(list(sample.index), nchunks)
 
     infodicts = []
@@ -1105,10 +1134,11 @@ def make_infodicts(wcr_settings, wr_settings, dc_settings, dsmc_settings,
 
         info = {
             "sample": subsample,
-            "dc_settings": dc_settings,
-            "wr_settings": wr_settings,
-            "wcr_settings": wcr_settings,
+            "dc_cont": dc_cont,
+            "wr_cont": wr_cont,
+            "wcr_cont": wcr_cont,
             "cols": cols,
+            "bandwidth": bandwidth,
         }
         infodicts.append(info)
     return sample, infodicts
@@ -1180,13 +1210,24 @@ def calc_scores(info):
     try:
         sample = info["sample"]
 
-        dc_emu = construct_deep_kde(info["dc_settings"])
-        wr_emu = construct_deep_kde(info["wr_settings"])
-        wcr_emu = construct_deep_kde(info["wcr_settings"])
+        dc_emu = NaiveKDE(info["dc_cont"])
+        dc_emu.train(bandwidth=info["bandwidth"])
+        wr_emu = NaiveKDE(info["wr_cont"])
+        wr_emu.train(bandwidth=info["bandwidth"])
+        wcr_emu = NaiveKDE(info["wcr_cont"])
+        wcr_emu.train(bandwidth=info["bandwidth"])
 
-        dc_score = dc_emu.score(sample[info["cols"]["cols_dc"]])
-        wr_score = wr_emu.score(sample[info["cols"]["cols_wr"]])
-        wcr_score = wcr_emu.score(sample[info["cols"]["cols_wcr"]])
+        dc_score = dc_emu.score_samples(sample[info["cols"]["cols_dc"]])
+        wr_score = wr_emu.score_samples(sample[info["cols"]["cols_wr"]])
+        wcr_score = wcr_emu.score_samples(sample[info["cols"]["cols_wcr"]])
+
+        # dc_emu = construct_deep_kde(info["dc_settings"])
+        # wr_emu = construct_deep_kde(info["wr_settings"])
+        # wcr_emu = construct_deep_kde(info["wcr_settings"])
+        #
+        # dc_score = dc_emu.score(sample[info["cols"]["cols_dc"]])
+        # wr_score = wr_emu.score(sample[info["cols"]["cols_wr"]])
+        # wcr_score = wcr_emu.score(sample[info["cols"]["cols_wcr"]])
 
     except KeyboardInterrupt:
         pass
