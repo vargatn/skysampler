@@ -3,6 +3,8 @@
 Galsim extension package based on LOS constructors
 """
 
+from __future__ import print_function
+
 import galsim
 import pickle
 import ngmix
@@ -13,15 +15,15 @@ import fitsio as fio
 
 class SkySampler(object):
     _takes_rng = True
-    _req_params = {"mock_file_list": str, "icl_file_list": str}
-    _opt_params = {}
+    _req_params = {"mock_file_list": str}
+    _opt_params = {"icl_file_list": str, "itile": int}
     _single_params = []
-    def __init__(self, mock_file_list, icl_file_list, rng=None):
+    def __init__(self, mock_file_list, itile=0, icl_file_list=None, rng=None):
 
         with open(mock_file_list) as file:
             self.mock_file_list = file.readlines()
 
-        self.itile = None
+        self.itile = itile
         self.mock = None
         self.ngal = None
 
@@ -57,13 +59,11 @@ class SkySampler(object):
     def get_tile_num(self):
         return self.itile
 
-    def safe_setup(self, itile):
-        self.itile = itile
+    def safe_setup(self, itile=None):
+        if itile is not None:
+            self.itile = itile
         if self.mock is None:
             self.read_mock()
-
-
-
 
 
 def sky_row(config, base, name):
@@ -73,7 +73,7 @@ def sky_row(config, base, name):
 
     if base.get('_sky_sampler_index', None) != ii:
         sampler = galsim.config.GetInputObj('sky_sampler', config, base, name)
-        sampler.safe_setup(base["tile_num"])
+        sampler.safe_setup()
 
         base['_sky_row_data'] = sampler.get_row(ii)
         base['_sky_sampler_index'] = ii
@@ -83,12 +83,13 @@ def sky_row(config, base, name):
 
 
 def sky_value(config, base, value_type):
+
     row, colnames = sky_row(config, base, value_type)
     col = galsim.config.ParseValue(config, 'col', base, str)[0]
-    # print(col)
     if "FLUX" in col:
         col = "FLUX_" + str(base["band"]).upper()
-    # TODO check this
+
+    # # TODO check this
     # if col == "SHEAR_G1" or col == "SHEAR_G2":
     #     res = 0.
     #     shear = base["shear_settings"]["value"]
@@ -112,9 +113,9 @@ def sky_value(config, base, value_type):
         #         res = -1. * shear * np.sin(2. * phi)
 
     # else:
+
     icol = colnames.index(col)
     res = float(row[icol])
-
     return res
 
 def sky_tile_id(config, base, value_type):
@@ -134,7 +135,7 @@ def _next_bdf_obj(config, base, ignore, gsparams, logger):
 
     if base.get('_sky_sampler_index', None) != ii:
         sampler = galsim.config.GetInputObj('sky_sampler', config, base, 'sky_sampler')
-        sampler.safe_setup(base["tile_num"])
+        sampler.safe_setup()
 
         row = sampler.get_row(ii)
         cols = sampler.get_columns()
@@ -145,8 +146,8 @@ def _next_bdf_obj(config, base, ignore, gsparams, logger):
     row = base['_sky_row_data']
 
     bdf_pars = np.zeros(7)
-    bdf_pars[2] = row["E1"]
-    bdf_pars[3] = row["E2"]
+    bdf_pars[2] = row["G1"]
+    bdf_pars[3] = row["G2"]
     bdf_pars[4] = row["TSIZE"]
     bdf_pars[5] = row["FRACDEV"]
 
