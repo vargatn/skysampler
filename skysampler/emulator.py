@@ -229,7 +229,7 @@ class DeepFeatureContainer(BaseContainer):
 
 class KDEContainer(object):
     _default_subset_sizes = (2000, 5000, 10000)
-    _kernel = "tophat"
+    _kernel = "gaussian"
     _atol = 1e-6
     _rtol = 1e-6
     _breadth_first = False
@@ -249,6 +249,9 @@ class KDEContainer(object):
         else:
             self.weights = weights.astype(float)
         self.ndim = self.data.shape[1]
+
+    def set_seed(self, seed):
+        self.rng.seed(seed)
 
     @staticmethod
     def _weight_multiplicator(arr, weights):
@@ -326,7 +329,7 @@ class KDEContainer(object):
     def select_subset(self, data, weights, nsample=10000):
         indexes = np.arange(len(data))
         ww = weights / weights.sum()
-        inds = self.rng.choice(indexes, size=nsample, p=ww)
+        inds = self.rng.choice(indexes, size=int(nsample), p=ww)
         subset = data.iloc[inds]
         return subset
 
@@ -337,7 +340,7 @@ class KDEContainer(object):
                                            atol=self._atol, rtol=self._rtol, breadth_first=self._breadth_first)
         self.kde.fit(self._data, sample_weight=self.weights)
 
-    def random_draw(self, num, rmin=None, rmax=None, rcol="LOGR", mode="data"):
+    def random_draw(self, num, rmin=None, rmax=None, rcol="LOGR"):
         """draws random samples from KDE maximum radius"""
         _res = self.kde.sample(n_samples=int(num), random_state=self.rng)
         self.res = self.pca_inverse_transform(_res)
@@ -366,25 +369,118 @@ class KDEContainer(object):
         res = self.kde.score_samples(arr)
         return res, self._jacobian_det
 
+    def drop_kde(self):
+        self.pca = None
+        self.kde = None
+
 ##########################################################################
 
-def construct_wide_container(dataloader, settings, nbins=100, nmax=5000, **kwargs):
+def construct_wide_container(dataloader, settings, nbins=100, nmax=5000, seed=None, **kwargs):
     fsc = FeatureSpaceContainer(dataloader)
     fsc.construct_features(**settings)
     # cont = fsc.to_dual(r_normalize=r_normalize)
     cont_small = fsc.downsample(nbins=nbins, nmax=nmax, kwargs=kwargs)
+    cont_small.set_seed(seed)
     cont_small.shuffle()
-    cont_small.standardize_data()
+    # cont_small.standardize_data()
     settings = copy.copy(settings)
     settings.update({"container": cont_small})
     return settings
 
 
-def construct_deep_container(data, settings, frac=1.):
+def construct_deep_container(data, settings, seed=None, frac=1.):
     fsc = DeepFeatureContainer(data)
     fsc.construct_features(**settings)
     cont = fsc.to_kde()
+    cont.set_seed(seed)
     cont.sample(frac=frac)
+    # cont.standardize_data()
     settings = copy.copy(settings)
     settings.update({"container": cont})
     return settings
+
+##########################################################################
+
+
+def make_naive_infodicts(wide_cr, wide_r, deep_c, deep_smc, columns,
+                         nsamples=1e5, nchunks=1, bandwidth=0.1,
+                         rmin=None, rmax=None, rcol="LOGR"):
+    deep_smc_emu = deep_smc["container"]
+    deep_smc_emu.standardize_data()
+    deep_smc_emu.construct_kde(bandwidth)
+
+    wide_r_emu = wide_r["container"]
+    wide_r_emu.standardize_data()
+    wide_r_emu.construct_kde(bandwidth)
+
+    samples_smc = deep_smc_emu.random_draw(nsamples)
+    samples_r = wide_r_emu.random_draw(nsamples, rmin=rmin, rmax=rmax)
+    samples = pd.merge(samples_smc, samples_r, left_index=True, right_index=True)
+    sample_inds = partition(list(samples.index), nchunks)
+
+    deep_smc_emu.drop_kde()
+    wide_r_emu.drop_kde()
+    infodicts = []
+    for i in np.arange(nchunks):
+        info = {
+            "columns": columns,
+            "bandwidth": bandwidth,
+            "wide_cr": wide_cr,
+            "deep_c": deep_c,
+            "wide_r": wide_r,
+            "sample": samples.loc[sample_inds[i]]
+        }
+        infodicts.append(info)
+    return infodicts, samples
+
+
+def calc_scores(info):
+    try:
+        columns = info["columns"]
+        bandwidth = info["bandwidth"]
+        sample = info["sample"]
+
+        scores = pd.DataFrame()
+
+        dc_emu = info["deep_c"]["container"]
+        dc_emu.standardize_data()
+        dc_emu.construct_kde(bandwidth=bandwidth)
+        _score, _jacobian = dc_emu.score_samples(sample[columns["cols_dc"]])
+        scores["dc"] = _score
+        scores["dc_jac"] = _jacobian
+
+        wr_emu = info["wide_r"]["container"]
+        wr_emu.standardize_data()
+        wr_emu.construct_kde(bandwidth=bandwidth)
+        _score, _jacobian = wr_emu.score_samples(sample[columns["cols_wr"]])
+        scores["wr"] = _score
+        scores["wr_jac"] = _jacobian
+
+        wcr_emu = info["wide_cr"]["container"]
+        wcr_emu.standardize_data()
+        wcr_emu.construct_kde(bandwidth=bandwidth)
+        _score, _jacobian = wcr_emu.score_samples(sample[columns["cols_wcr"]])
+        scores["wcr"] = _score
+        scores["wcr_jac"] = _jacobian
+
+    except KeyboardInterrupt:
+        pass
+
+    return scores
+
+
+def run_scores(infodicts):
+    pool = mp.Pool(processes=len(infodicts))
+    try:
+        pp = pool.map_async(calc_scores, infodicts)
+        # the results here should be a list of score values
+        result = pp.get(86400)  # apparently this counters a bug in the exception passing in python.subprocess...
+    except KeyboardInterrupt:
+        print("Caught KeyboardInterrupt, terminating workers")
+        pool.terminate()
+        pool.join()
+    else:
+        pool.close()
+        pool.join()
+
+    return pd.concat(result)
