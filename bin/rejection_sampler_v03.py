@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pickle
 import fitsio as fio
-import skysampler.emulator as emulator
+import skysampler.old_emulator as emulator
 import skysampler.utils as utils
 
 

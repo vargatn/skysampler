@@ -5,7 +5,7 @@ Rejection sampler draw
 import numpy as np
 import pickle
 import fitsio as fio
-import skysampler.emulator as emulator
+import skysampler.old_emulator as emulator
 import skysampler.utils as utils
 
 VERSION = "01-gr-ri"

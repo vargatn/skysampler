@@ -8,7 +8,7 @@ from setuptools import setup, find_packages
 setup(name="skysampler",
       packages=find_packages(),
       description="Generate random realizations of line-of-sights in optical sky surveys ",
-      install_requires=['numpy', 'scipy', 'pandas', 'astropy', 'fitsio', "healpy"],
+      install_requires=['numpy', 'scipy', 'pandas', 'astropy'],
       author="Tamas Norbert Varga",
       author_email="T.Varga@physik.lmu.de",
       version="0.1")

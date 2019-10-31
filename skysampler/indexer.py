@@ -2,7 +2,7 @@
 Module to handle survey data Processing and IO
 """
 
-
+from __future__ import print_function
 import glob
 import numpy as np
 import pandas as pd
@@ -263,7 +263,7 @@ class TargetData(object):
         logger.info("selecting subset from  TargetData with filename " + str(self.fname))
         logger.info("pars:" + str(self.pars))
         logger.info("limits:" + str(self.limits))
-
+        print(limits)
         bool_inds = np.ones(len(self.data), dtype=bool)
         for par, lim in zip(pars, limits):
             if par == "redshift":
@@ -544,9 +544,10 @@ class SurveyIndexer(object):
             self.survey.tab = self.survey.tab
 
     def run(self, fname="test"):
+        # pass
         self.index()
         result = self.draw_samples()
-        pickle.dump(result, open(fname, "wb"))
+        # pickle.dump(result, open(fname, "wb"))
 
     def index(self):
 
