@@ -272,6 +272,8 @@ class KDEContainer(object):
 
         tab = pd.DataFrame()
         tab["IND"] = inds
+        if n > len(tab):
+            n = None
         inds = tab.sample(n=n, frac=frac)["IND"].values
 
         self.data = self.data.iloc[inds].copy().reset_index(drop=True)
@@ -287,7 +289,7 @@ class KDEContainer(object):
         # draw a subset of 100k rows, then multiplicate them according to weights
         # fit the PCA on theose new rows
         subset = self.select_subset(_data, self.weights, nsample=100000)
-        subset = self._weight_multiplicator(subset.values, self.weights)
+        # subset = self._weight_multiplicator(subset.values, self.weights)
         self.pca = decomp.PCA()
         self.pca.fit(subset)
 
@@ -328,9 +330,11 @@ class KDEContainer(object):
         self._data = self.pca_transform(self.data)
 
     def select_subset(self, data, weights, nsample=10000):
+        # if nsample > len(data):
+            # nsample = len(data)
         indexes = np.arange(len(data))
         ww = weights / weights.sum()
-        inds = self.rng.choice(indexes, size=int(nsample), p=ww)
+        inds = self.rng.choice(indexes, size=int(nsample), p=ww, replace=True)
         subset = data.iloc[inds]
         return subset
 
