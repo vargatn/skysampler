@@ -230,6 +230,7 @@ class DeepFeatureContainer(BaseContainer):
 class KDEContainer(object):
     _default_subset_sizes = (2000, 5000, 10000)
     _kernel = "gaussian"
+    # _kernel = "tophat"
     _atol = 1e-6
     _rtol = 1e-6
     _breadth_first = False
@@ -429,6 +430,8 @@ def make_naive_infodicts(wide_cr, wide_r, deep_c, deep_smc, columns,
             "deep_c": deep_c,
             "wide_r": wide_r,
             "sample": samples.loc[sample_inds[i]]
+            "rmin": rmin,
+            "rmax": rmax,
         }
         infodicts.append(info)
     return infodicts, samples

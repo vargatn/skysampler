@@ -22,10 +22,10 @@ except:
 import multiprocessing as mp
 
 tag = "delta_rejection_sample_v01"
-NSAMPLES = 10000
-NCHUNKS = 16
-CATALOG_RMAX = 5.
-DRAW_RMAX = 3.
+NSAMPLES = 1000000
+NCHUNKS = 32
+CATALOG_RMAX = 8.
+DRAW_RMAX = 5.
 
 root_path = "/e/eser2/vargatn/EMULATOR/DELTA/resamples/"
 wide_data_path = "/e/eser2/vargatn/EMULATOR/GAMMA/multi-indexer-gamma_v001_clust__z0_l1_py2.p"
