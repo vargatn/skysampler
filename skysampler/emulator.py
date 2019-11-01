@@ -429,7 +429,7 @@ def make_naive_infodicts(wide_cr, wide_r, deep_c, deep_smc, columns,
             "wide_cr": wide_cr,
             "deep_c": deep_c,
             "wide_r": wide_r,
-            "sample": samples.loc[sample_inds[i]]
+            "sample": samples.loc[sample_inds[i]],
             "rmin": rmin,
             "rmax": rmax,
         }
