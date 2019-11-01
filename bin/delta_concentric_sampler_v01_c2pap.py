@@ -92,13 +92,13 @@ if __name__ == "__main__":
         _deep_c_settings = emulator.construct_deep_container(deep, deep_c_settings, seed=seeds[nrbins * i + 0])
         _deep_smc_settings = emulator.construct_deep_container(deep, deep_smc_settings, seed=seeds[nrbins * i + 1])
 
-        _wide_cr_settings = wide_cr_settings.copy()
-        _wide_cr_settings["limits"][-1] = (10**-3, 10**LOGR_CAT_RMAXS[i])
-        _wide_cr_settings = emulator.construct_wide_container(mdl, _wide_cr_settings, seed=seeds[nrbins * i + 2])
+        tmp_wide_cr_settings = wide_cr_settings.copy()
+        tmp_wide_cr_settings["limits"][-1] = (10**-3, 10**LOGR_CAT_RMAXS[i])
+        _wide_cr_settings = emulator.construct_wide_container(mdl, tmp_wide_cr_settings, seed=seeds[nrbins * i + 2])
 
-        _wide_r_settings = wide_r_settings.copy()
-        _wide_r_settings["limits"][-1] = (10**-3, 10**LOGR_CAT_RMAXS[i])
-        _wide_r_settings = emulator.construct_wide_container(mdl, _wide_r_settings, seed=seeds[nrbins * i + 3])
+        tmp_wide_r_settings = wide_r_settings.copy()
+        tmp_wide_r_settings["limits"][-1] = (10**-3, 10**LOGR_CAT_RMAXS[i])
+        _wide_r_settings = emulator.construct_wide_container(mdl, tmp_wide_r_settings, seed=seeds[nrbins * i + 3])
 
         # create infodicts
         infodicts, samples = emulator.make_naive_infodicts(_wide_cr_settings, _wide_r_settings, _deep_c_settings,
@@ -113,10 +113,10 @@ if __name__ == "__main__":
         master_dict = {
             "columns": infodicts[0]["columns"],
             "bandwidth": infodicts[0]["bandwidth"],
-            "deep_c_settings": _deep_c_settings,
-            "deep_smc_settings": _deep_smc_settings,
-            "wide_r_settings": _wide_r_settings,
-            "wide_cr_settings": _wide_cr_settings,
+            "deep_c_settings": deep_c_settings,
+            "deep_smc_settings": deep_smc_settings,
+            "wide_r_settings": tmp_wide_r_settings,
+            "wide_cr_settings": tmp_wide_cr_settings,
             "rmin": infodicts[0]["rmin"],
             "rmax": infodicts[0]["rmin"],
         }
