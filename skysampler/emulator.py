@@ -378,6 +378,9 @@ class KDEContainer(object):
         self.pca = None
         self.kde = None
 
+    def drop_col(self, colname):
+        self.data = self.data.drop(columns=colname)
+
 ##########################################################################
 
 def construct_wide_container(dataloader, settings, nbins=100, nmax=5000, seed=None, **kwargs):
@@ -393,10 +396,12 @@ def construct_wide_container(dataloader, settings, nbins=100, nmax=5000, seed=No
     return settings
 
 
-def construct_deep_container(data, settings, seed=None, frac=1.):
+def construct_deep_container(data, settings, seed=None, frac=1., drop=None):
     fsc = DeepFeatureContainer(data)
     fsc.construct_features(**settings)
     cont = fsc.to_kde()
+    if drop is not None:
+        cont.drop_col(drop)
     cont.set_seed(seed)
     cont.sample(frac=frac)
     # cont.standardize_data()

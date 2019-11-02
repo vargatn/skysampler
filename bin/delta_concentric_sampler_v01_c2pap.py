@@ -9,7 +9,7 @@ try:
 except:
     import pickle
 
-tag = "delta_concentric_sample_v01"
+tag = "delta_concentric_sample_v02"
 NSAMPLES = 100000
 NCHUNKS = 16
 BANDWIDTH = 0.05
@@ -24,12 +24,13 @@ deep_data_path = "/gpfs/work/pr27mu/di57vej/SIM_WORK/run-ugriz-mof02_naive-clean
 
 deep_c_settings = {
     "columns": [
+        ("MAG_I", ("bdf_mag", 2)),
         ("COLOR_G_R", (("bdf_mag", 1), ("bdf_mag", 2), "-")),
         ("COLOR_R_I", (("bdf_mag", 2), ("bdf_mag", 3), "-")),
         ("COLOR_I_Z", (("bdf_mag", 3), ("bdf_mag", 4), "-")),
     ],
-    "logs": [False, False, False],
-    "limits": [(-1, 3), (-1, 3), (-1, 3)],
+    "logs": [False, False, False, False],
+    "limits": [(17, 22.5), (-1, 3), (-1, 3), (-1, 3)],
 }
 deep_smc_settings = {
     "columns": [
@@ -89,7 +90,7 @@ if __name__ == "__main__":
         print(outname)
 
         # update configs
-        _deep_c_settings = emulator.construct_deep_container(deep, deep_c_settings, seed=seeds[nrbins * i + 0])
+        _deep_c_settings = emulator.construct_deep_container(deep, deep_c_settings, drop="MAG_I", seed=seeds[nrbins * i + 0])
         _deep_smc_settings = emulator.construct_deep_container(deep, deep_smc_settings, seed=seeds[nrbins * i + 1])
 
         tmp_wide_cr_settings = wide_cr_settings.copy()
