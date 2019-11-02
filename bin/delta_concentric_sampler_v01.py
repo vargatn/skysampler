@@ -9,13 +9,18 @@ try:
 except:
     import pickle
 
-tag = "delta_concentric_sample_v02-test"
+tag = "delta_concentric_sample_v03-test"
 NSAMPLES = 100
-NCHUNKS = 16
+NCHUNKS = 24
 BANDWIDTH = 0.05
-LOGR_DRAW_RMINS = [-3, -0.5, 0., 0.5]
-LOGR_DRAW_RMAXS = [-0.5, 0., 0.5, 1.2]
-LOGR_CAT_RMAXS = [0., 0.5, 1.2, 2.]
+
+LOGR_DRAW_RMINS = [-3, -0.5,]
+LOGR_DRAW_RMAXS = [-0.5, 0.,]
+LOGR_CAT_RMAXS = [0., 0.5,]
+
+# LOGR_DRAW_RMINS = [-3, -0.5, 0., 0.5]
+# LOGR_DRAW_RMAXS = [-0.5, 0., 0.5, 1.2]
+# LOGR_CAT_RMAXS = [0., 0.5, 1.2, 2.]
 
 root_path = "/e/eser2/vargatn/EMULATOR/DELTA/resamples/"
 wide_data_path = "/e/eser2/vargatn/EMULATOR/GAMMA/multi-indexer-gamma_v001_clust__z0_l1_py2.p"
@@ -23,20 +28,20 @@ deep_data_path = "/e/eser2/vargatn/EMULATOR/DELTA/run-ugriz-mof02_naive-cleaned.
 
 deep_c_settings = {
     "columns": [
-        ("MAG_I", ("bdf_mag", 2)),
+        ("MAG_I", ("bdf_mag", 3)),
         ("COLOR_G_R", (("bdf_mag", 1), ("bdf_mag", 2), "-")),
         ("COLOR_R_I", (("bdf_mag", 2), ("bdf_mag", 3), "-")),
         ("COLOR_I_Z", (("bdf_mag", 3), ("bdf_mag", 4), "-")),
     ],
     "logs": [False, False, False, False],
-    "limits": [(17, 22.5), (-1, 3), (-1, 3), (-1, 3)],
+    "limits": [(17, 25.5), (-1, 3), (-1, 3), (-1, 3)],
 }
 deep_smc_settings = {
     "columns": [
         ("GABS", (("bdf_g", 0), ("bdf_g", 1), "SQSUM")),
         ("SIZE", ("bdf_T", 1, "+")),
         ("FRACDEV", "bdf_fracdev"),
-        ("MAG_I", ("bdf_mag", 2)),
+        ("MAG_I", ("bdf_mag", 3)),
         ("COLOR_G_R", (("bdf_mag", 1), ("bdf_mag", 2), "-")),
         ("COLOR_R_I", (("bdf_mag", 2), ("bdf_mag", 3), "-")),
         ("COLOR_I_Z", (("bdf_mag", 3), ("bdf_mag", 4), "-")),

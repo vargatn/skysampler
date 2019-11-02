@@ -9,7 +9,7 @@ try:
 except:
     import pickle
 
-tag = "delta_concentric_sample_v02"
+tag = "delta_concentric_sample_v03"
 NSAMPLES = 100000
 NCHUNKS = 16
 BANDWIDTH = 0.05
@@ -24,20 +24,20 @@ deep_data_path = "/gpfs/work/pr27mu/di57vej/SIM_WORK/run-ugriz-mof02_naive-clean
 
 deep_c_settings = {
     "columns": [
-        ("MAG_I", ("bdf_mag", 2)),
+        ("MAG_I", ("bdf_mag", 3)),
         ("COLOR_G_R", (("bdf_mag", 1), ("bdf_mag", 2), "-")),
         ("COLOR_R_I", (("bdf_mag", 2), ("bdf_mag", 3), "-")),
         ("COLOR_I_Z", (("bdf_mag", 3), ("bdf_mag", 4), "-")),
     ],
     "logs": [False, False, False, False],
-    "limits": [(17, 22.5), (-1, 3), (-1, 3), (-1, 3)],
+    "limits": [(17, 25.5), (-1, 3), (-1, 3), (-1, 3)],
 }
 deep_smc_settings = {
     "columns": [
         ("GABS", (("bdf_g", 0), ("bdf_g", 1), "SQSUM")),
         ("SIZE", ("bdf_T", 1, "+")),
         ("FRACDEV", "bdf_fracdev"),
-        ("MAG_I", ("bdf_mag", 2)),
+        ("MAG_I", ("bdf_mag", 3)),
         ("COLOR_G_R", (("bdf_mag", 1), ("bdf_mag", 2), "-")),
         ("COLOR_R_I", (("bdf_mag", 2), ("bdf_mag", 3), "-")),
         ("COLOR_I_Z", (("bdf_mag", 3), ("bdf_mag", 4), "-")),

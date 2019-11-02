@@ -16,7 +16,7 @@ import sklearn.model_selection as modsel
 import sklearn.preprocessing as preproc
 import sklearn.decomposition as decomp
 import copy
-import sys
+import glob
 try:
     from collections.abc import Iterable
 except ImportError:
@@ -499,3 +499,39 @@ def run_scores(infodicts):
         pool.join()
 
     return pd.concat(result)
+
+
+##############################################################
+
+def read_concentric(score_path_expr, m_factor=20, seed=6):
+    fname_scores = np.sort(glob.glob(score_path_expr))
+    fname_samples = []
+    for _fname in fname_scores:
+        fname_samples.append(_fname.replace("scores", "samples"))
+
+    samples = []
+    for _fname in fname_samples:
+        _tab = fio.read(_fname)
+        _tab = pd.DataFrame.from_records(_tab)
+        samples.append(_tab)
+    samples = pd.concat(samples)
+
+    scores = []
+    for _fname in fname_scores:
+        _tab = fio.read(_fname)
+        _tab = pd.DataFrame.from_records(_tab)
+        scores.append(_tab)
+    scores = pd.concat(scores)
+
+    dc_score = np.exp(scores["dc"]) * np.abs(scores["dc_jac"])
+    wr_score = np.exp(scores["wr"]) * np.abs(scores["wr_jac"])
+    wcr_score = np.exp(scores["wcr"]) * np.abs(scores["wcr_jac"])
+
+    rng = np.random.RandomState(seed)
+    uniform = rng.uniform(0, 1, len(samples))
+    p_proposal = m_factor * dc_score * wr_score
+    p_ref = wcr_score
+
+    inds = uniform < p_ref / p_proposal
+    resamples = samples[inds]
+    return resamples
