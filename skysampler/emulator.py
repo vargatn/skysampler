@@ -383,13 +383,15 @@ class KDEContainer(object):
 
 ##########################################################################
 
-def construct_wide_container(dataloader, settings, nbins=100, nmax=5000, seed=None, **kwargs):
+def construct_wide_container(dataloader, settings, nbins=100, nmax=5000, seed=None, drop=None, **kwargs):
     fsc = FeatureSpaceContainer(dataloader)
     fsc.construct_features(**settings)
     # cont = fsc.to_dual(r_normalize=r_normalize)
     cont_small = fsc.downsample(nbins=nbins, nmax=nmax, kwargs=kwargs)
     cont_small.set_seed(seed)
     cont_small.shuffle()
+    if drop is not None:
+        cont_small.drop_col(drop)
     # cont_small.standardize_data()
     settings = copy.copy(settings)
     settings.update({"container": cont_small})

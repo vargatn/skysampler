@@ -48,20 +48,22 @@ deep_smc_settings = {
 
 wide_cr_settings = {
     "columns": [
+        ("MAG_I", "MOF_CM_MAG_CORRECTED_I"),
         ("COLOR_G_R", ("MOF_CM_MAG_CORRECTED_G", "MOF_CM_MAG_CORRECTED_R", "-")),
         ("COLOR_R_I", ("MOF_CM_MAG_CORRECTED_R", "MOF_CM_MAG_CORRECTED_I", "-")),
         ("COLOR_I_Z", ("MOF_CM_MAG_CORRECTED_I", "MOF_CM_MAG_CORRECTED_Z", "-")),
         ("LOGR", "DIST"),
     ],
-    "logs": [False, False, False, True],
-    "limits": [(-1, 3), (-1, 3), (-1, 3), (1e-3, 50.),],
+    "logs": [False, False, False, False, True],
+    "limits": [(17, 22.5), (-1, 3), (-1, 3), (-1, 3), (1e-3, 50.),],
 }
 wide_r_settings = {
     "columns": [
+        ("MAG_I", "MOF_CM_MAG_CORRECTED_I"),
         ("LOGR", "DIST"),
     ],
-    "logs": [True,],
-    "limits": [(1e-3, 50.),],
+    "logs": [False, True,],
+    "limits": [(17, 22.5), (1e-3, 50.),],
 }
 
 columns = {
@@ -95,11 +97,11 @@ if __name__ == "__main__":
 
         tmp_wide_cr_settings = wide_cr_settings.copy()
         tmp_wide_cr_settings["limits"][-1] = (10**-3, 10**LOGR_CAT_RMAXS[i])
-        _wide_cr_settings = emulator.construct_wide_container(mdl, tmp_wide_cr_settings, seed=seeds[nrbins * i + 2])
+        _wide_cr_settings = emulator.construct_wide_container(mdl, tmp_wide_cr_settings, drop="MAG_I", seed=seeds[nrbins * i + 2])
 
         tmp_wide_r_settings = wide_r_settings.copy()
         tmp_wide_r_settings["limits"][-1] = (10**-3, 10**LOGR_CAT_RMAXS[i])
-        _wide_r_settings = emulator.construct_wide_container(mdl, tmp_wide_r_settings, seed=seeds[nrbins * i + 3])
+        _wide_r_settings = emulator.construct_wide_container(mdl, tmp_wide_r_settings, drop="MAG_I", seed=seeds[nrbins * i + 3])
 
         # create infodicts
         infodicts, samples = emulator.make_naive_infodicts(_wide_cr_settings, _wide_r_settings, _deep_c_settings,

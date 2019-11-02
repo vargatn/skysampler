@@ -9,7 +9,7 @@ try:
 except:
     import pickle
 
-tag = "delta_concentric_sample_v01"
+tag = "delta_concentric_sample_v02"
 NSAMPLES = 100
 NCHUNKS = 32
 BANDWIDTH = 0.05
@@ -23,12 +23,13 @@ deep_data_path = "/e/eser2/vargatn/EMULATOR/DELTA/run-ugriz-mof02_naive-cleaned.
 
 deep_c_settings = {
     "columns": [
+        ("MAG_I", ("bdf_mag", 2)),
         ("COLOR_G_R", (("bdf_mag", 1), ("bdf_mag", 2), "-")),
         ("COLOR_R_I", (("bdf_mag", 2), ("bdf_mag", 3), "-")),
         ("COLOR_I_Z", (("bdf_mag", 3), ("bdf_mag", 4), "-")),
     ],
-    "logs": [False, False, False],
-    "limits": [(-1, 3), (-1, 3), (-1, 3)],
+    "logs": [False, False, False, False],
+    "limits": [(17, 22.5), (-1, 3), (-1, 3), (-1, 3)],
 }
 deep_smc_settings = {
     "columns": [
@@ -46,20 +47,22 @@ deep_smc_settings = {
 
 wide_cr_settings = {
     "columns": [
+        ("MAG_I", "MOF_CM_MAG_CORRECTED_I"),
         ("COLOR_G_R", ("MOF_CM_MAG_CORRECTED_G", "MOF_CM_MAG_CORRECTED_R", "-")),
         ("COLOR_R_I", ("MOF_CM_MAG_CORRECTED_R", "MOF_CM_MAG_CORRECTED_I", "-")),
         ("COLOR_I_Z", ("MOF_CM_MAG_CORRECTED_I", "MOF_CM_MAG_CORRECTED_Z", "-")),
         ("LOGR", "DIST"),
     ],
-    "logs": [False, False, False, True],
-    "limits": [(-1, 3), (-1, 3), (-1, 3), (1e-3, 50.),],
+    "logs": [False, False, False, False, True],
+    "limits": [(17, 22.5), (-1, 3), (-1, 3), (-1, 3), (1e-3, 50.),],
 }
 wide_r_settings = {
     "columns": [
+        ("MAG_I", "MOF_CM_MAG_CORRECTED_I"),
         ("LOGR", "DIST"),
     ],
-    "logs": [True,],
-    "limits": [(1e-3, 50.),],
+    "logs": [False, True,],
+    "limits": [(17, 22.5), (1e-3, 50.),],
 }
 
 columns = {
@@ -88,16 +91,16 @@ if __name__ == "__main__":
         print(outname)
 
         # update configs
-        _deep_c_settings = emulator.construct_deep_container(deep, deep_c_settings, seed=seeds[nrbins * i + 0])
+        _deep_c_settings = emulator.construct_deep_container(deep, deep_c_settings, drop="MAG_I", seed=seeds[nrbins * i + 0])
         _deep_smc_settings = emulator.construct_deep_container(deep, deep_smc_settings, seed=seeds[nrbins * i + 1])
 
-        _wide_cr_settings = wide_cr_settings.copy()
-        _wide_cr_settings["limits"][-1] = (10**-3, 10**LOGR_CAT_RMAXS[i])
-        _wide_cr_settings = emulator.construct_wide_container(mdl, _wide_cr_settings, seed=seeds[nrbins * i + 2])
+        tmp_wide_cr_settings = wide_cr_settings.copy()
+        tmp_wide_cr_settings["limits"][-1] = (10**-3, 10**LOGR_CAT_RMAXS[i])
+        _wide_cr_settings = emulator.construct_wide_container(mdl, tmp_wide_cr_settings, drop="MAG_I", seed=seeds[nrbins * i + 2])
 
-        _wide_r_settings = wide_r_settings.copy()
-        _wide_r_settings["limits"][-1] = (10**-3, 10**LOGR_CAT_RMAXS[i])
-        _wide_r_settings = emulator.construct_wide_container(mdl, _wide_r_settings, seed=seeds[nrbins * i + 3])
+        tmp_wide_r_settings = wide_r_settings.copy()
+        tmp_wide_r_settings["limits"][-1] = (10**-3, 10**LOGR_CAT_RMAXS[i])
+        _wide_r_settings = emulator.construct_wide_container(mdl, tmp_wide_r_settings, drop="MAG_I", seed=seeds[nrbins * i + 3])
 
         # create infodicts
         infodicts, samples = emulator.make_naive_infodicts(_wide_cr_settings, _wide_r_settings, _deep_c_settings,
@@ -112,10 +115,10 @@ if __name__ == "__main__":
         master_dict = {
             "columns": infodicts[0]["columns"],
             "bandwidth": infodicts[0]["bandwidth"],
-            "deep_c_settings": _deep_c_settings,
-            "deep_smc_settings": _deep_smc_settings,
-            "wide_r_settings": _wide_r_settings,
-            "wide_cr_settings": _wide_cr_settings,
+            "deep_c_settings": deep_c_settings,
+            "deep_smc_settings": deep_smc_settings,
+            "wide_r_settings": tmp_wide_r_settings,
+            "wide_cr_settings": tmp_wide_cr_settings,
             "rmin": infodicts[0]["rmin"],
             "rmax": infodicts[0]["rmin"],
         }
@@ -126,5 +129,3 @@ if __name__ == "__main__":
         fname = outname + "_scores.fits"
         print(fname)
         fio.write(fname, result.to_records(), clobber=True)
-
-
