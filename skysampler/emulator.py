@@ -380,6 +380,7 @@ class KDEContainer(object):
 
     def drop_col(self, colname):
         self.data = self.data.drop(columns=colname)
+        self.columns = self.data.columns
 
 ##########################################################################
 

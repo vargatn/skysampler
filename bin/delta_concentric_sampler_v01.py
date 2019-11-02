@@ -9,9 +9,9 @@ try:
 except:
     import pickle
 
-tag = "delta_concentric_sample_v02"
+tag = "delta_concentric_sample_v02-test"
 NSAMPLES = 100
-NCHUNKS = 32
+NCHUNKS = 16
 BANDWIDTH = 0.05
 LOGR_DRAW_RMINS = [-3, -0.5, 0., 0.5]
 LOGR_DRAW_RMAXS = [-0.5, 0., 0.5, 1.2]
