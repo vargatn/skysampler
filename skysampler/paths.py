@@ -69,10 +69,10 @@ def setup_logger(tag, level, logfile_info):
     """
     tag = tag.upper()
 
-    logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s %(message)s",
-                        level=preset_logging_levels[level], stream=sys.stdout)
+    # logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    #                     level=preset_logging_levels[level], stream=sys.stdout)
     # TODO add file logging here
-
+    logging.basicConfig(format="%(message)s", level=preset_logging_levels[level], stream=sys.stdout)
     return logging.getLogger(tag)
 
 

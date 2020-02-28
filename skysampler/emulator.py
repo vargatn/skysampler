@@ -281,7 +281,7 @@ class KDEContainer(object):
 
     def fit_pca(self):
         """Standardize -> PCA -> Standardize"""
-
+        # _data = self.data
         self.mean1 = weighted_mean(self.data, self.weights)
         _data = self.data - self.mean1
         #
@@ -301,10 +301,13 @@ class KDEContainer(object):
 
         # this is the forward transformation from raw data to processed data
         self._jacobian_matrix = np.dot(scale_matrix, rotation_matrix)
+        # self._jacobian_matrix = rotation_matrix
+
         # this is the inverse transformation from processed data to raw data
         self._jacobian_matrix_inv = np.linalg.inv(self._jacobian_matrix)
         # in the KDE we need the Jacobi determinat of the inverse transformation
         self._jacobian_det = np.linalg.det(self._jacobian_matrix_inv)
+        # self._jacobian_det = 1.
 
         self.pca_params = {
             "mean1": self.mean1.copy(),
@@ -313,12 +316,14 @@ class KDEContainer(object):
         }
 
     def pca_transform(self, data):
+        # _data = data
         _data = data - self.mean1
         _data = self.pca.transform(_data)
         _data /= self.std2
         return _data
 
     def pca_inverse_transform(self, data):
+        # _data = data
         _data = data * self.std2
         _data = self.pca.inverse_transform(_data)
         _data = _data + self.mean1
@@ -328,6 +333,7 @@ class KDEContainer(object):
     def standardize_data(self):
         self.fit_pca()
         self._data = self.pca_transform(self.data)
+        # self._data = self.data
 
     def select_subset(self, data, weights, nsample=10000):
         # if nsample > len(data):
@@ -381,6 +387,7 @@ class KDEContainer(object):
     def drop_col(self, colname):
         self.data = self.data.drop(columns=colname)
         self.columns = self.data.columns
+        self.ndim = len(self.columns)
 
 ##########################################################################
 
@@ -463,6 +470,7 @@ def calc_scores(info):
         _score, _jacobian = dc_emu.score_samples(sample[columns["cols_dc"]])
         scores["dc"] = _score
         scores["dc_jac"] = _jacobian
+        # scores["dc_jac"] = 1.
 
         wr_emu = info["wide_r"]["container"]
         wr_emu.standardize_data()
@@ -470,6 +478,7 @@ def calc_scores(info):
         _score, _jacobian = wr_emu.score_samples(sample[columns["cols_wr"]])
         scores["wr"] = _score
         scores["wr_jac"] = _jacobian
+        # scores["wr_jac"] = 1.
 
         wcr_emu = info["wide_cr"]["container"]
         wcr_emu.standardize_data()
@@ -477,6 +486,7 @@ def calc_scores(info):
         _score, _jacobian = wcr_emu.score_samples(sample[columns["cols_wcr"]])
         scores["wcr"] = _score
         scores["wcr_jac"] = _jacobian
+        # scores["wcr_jac"] = 1.
 
     except KeyboardInterrupt:
         pass

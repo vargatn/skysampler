@@ -92,6 +92,7 @@ def shuffle(tab, rng):
         shuffled table
     """
     logger.debug("shuffling table in place")
+    # print("shuffling table in place")
     return subsample(tab, len(tab), rng, replace=False)
 
 
@@ -480,22 +481,23 @@ class MultiIndexer(object):
     def run(self, nprocess=1):
 
         infodicts = self._get_infodicts()
-
+        print("len", len(infodicts))
         if nprocess > len(infodicts):
             nprocess = len(infodicts)
+        print(nprocess)
         info_chunks = partition(infodicts, nprocess)
 
-        pool = mp.Pool(processes=nprocess)
-        try:
-            pp = pool.map_async(_indexer_chunk_run, info_chunks)
-            pp.get(86400)  # apparently this counters a bug in the exception passing in python.subprocess...
-        except KeyboardInterrupt:
-            print("Caught KeyboardInterrupt, terminating workers")
-            pool.terminate()
-            pool.join()
-        else:
-            pool.close()
-            pool.join()
+        # pool = mp.Pool(processes=nprocess)
+        # try:
+        #     pp = pool.map_async(_indexer_chunk_run, info_chunks)
+        #     pp.get(86400)  # apparently this counters a bug in the exception passing in python.subprocess...
+        # except KeyboardInterrupt:
+        #     print("Caught KeyboardInterrupt, terminating workers")
+        #     pool.terminate()
+        #     pool.join()
+        # else:
+        #     pool.close()
+        #     pool.join()
 
 
 def _indexer_chunk_run(chunks):
