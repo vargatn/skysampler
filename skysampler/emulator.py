@@ -153,7 +153,11 @@ class FeatureSpaceContainer(BaseContainer):
         self.numprof = info.numprof
         self.samples = info.samples
 
-        self.alldata = pd.concat(self.samples).reset_index(drop=True)
+        valid_elements = np.nonzero([(len(tmp) > 0) for tmp in self.samples])[0].astype(int)
+        if len(valid_elements) != len(self.samples):
+            self.alldata = pd.concat(np.array(self.samples)[valid_elements]).reset_index(drop=True)
+        else:
+            self.alldata = pd.concat(self.samples).reset_index(drop=True)
 
         self.nobj = self.target.nrow
 
@@ -389,6 +393,103 @@ class KDEContainer(object):
         self.columns = self.data.columns
         self.ndim = len(self.columns)
 
+
+class KFoldCV(object):
+    def __init__(self, cont, nfold=5, nprocess=100, seed=None):
+        self.cont = cont
+        self.cont.standardize_data()
+        self.nfold = nfold
+        self.nprocess = nprocess
+        self.seed = seed
+        self.rng = np.random.RandomState(seed)
+
+        self.labels = self.rng.randint(0, self.nfold, len(self.cont.data))
+
+    def _loop_bandwidths(self, bandwidths):
+        scores = []
+        for bw in bandwidths:
+            print(bw)
+            mscores = self._loop_cv(bw)
+            scores.append(mscores)
+        return scores
+
+    def _loop_cv(self, bandwidth):
+
+        mscores = []
+        for ifold in np.arange(self.nfold):
+            print("\t", ifold)
+            train, test = self._split(ifold)
+
+            iarr = np.arange(len(test.data))
+            iparts = partition(iarr, self.nprocess)
+
+            infodicts = []
+            for i in np.arange(len(iparts)):
+                info = {
+                    "train": train,
+                    "test_data": test.data.iloc[iparts[0]],
+                    "test_weights": test.weights.iloc[iparts[0]],
+                    "bandwidth": bandwidth,
+                }
+                infodicts.append(info)
+
+            result = run_cv_scores(infodicts)
+            mscore = np.sum(result["weights"] * (result["scores"] + np.log(result["jac"]))) / np.sum(result["weights"])
+            mscores.append(mscore)
+
+        return mscores
+
+    def _split(self, label):
+        """splits data into train and test k-fold"""
+
+        _ind = self.labels != label
+        train = self._shrink(_ind)
+
+        _ind = self.labels == label
+        test = self._shrink(_ind)
+        return train, test
+
+    def _shrink(self, index):
+        _cont = copy.copy(self.cont)
+        _cont.data = _cont.data.iloc[index].copy()
+        _cont.weights = _cont.weights.iloc[index].copy()
+
+        _cont._data = _cont.pca_transform(_cont.data)
+        return _cont
+
+
+def run_cv_scores(infodicts):
+    pool = mp.Pool(processes=len(infodicts))
+    try:
+        pp = pool.map_async(_score_cv_samples, infodicts)
+        # the results here should be a list of score values
+        result = pp.get(86400)  # apparently this counters a bug in the exception passing in python.subprocess...
+    except KeyboardInterrupt:
+        print("Caught KeyboardInterrupt, terminating workers")
+        pool.terminate()
+        pool.join()
+    else:
+        pool.close()
+        pool.join()
+
+    return pd.concat(result)
+
+
+def _score_cv_samples(info):
+    train = info["train"]
+
+    train.construct_kde(bandwidth=info["bandwidth"])
+
+    scores, jac = train.score_samples(info["test_data"])
+
+    result = pd.DataFrame()
+    result["scores"] = scores
+    result["jac"] = np.ones(len(result)) * jac
+    result["weights"] = info["test_weights"].values
+
+    return result
+
+
 ##########################################################################
 
 def construct_wide_container(dataloader, settings, nbins=100, nmax=5000, seed=None, drop=None, **kwargs):
@@ -420,6 +521,106 @@ def construct_deep_container(data, settings, seed=None, frac=1., drop=None):
     return settings
 
 ##########################################################################
+
+def make_classifier_infodicts(wide_cr_clust, wide_r_ref, wide_cr_rands,
+                              deep_c, deep_smc, columns,
+                              nsamples=1e5, nchunks=1, bandwidth=0.1,
+                              rmin=None, rmax=None, rcol="LOGR"):
+
+    deep_smc_emu = deep_smc["container"]
+    deep_smc_emu.standardize_data()
+    deep_smc_emu.construct_kde(bandwidth)
+
+    wide_r_emu = wide_r_ref["container"]
+    wide_r_emu.standardize_data()
+    wide_r_emu.construct_kde(bandwidth)
+
+    samples_smc = deep_smc_emu.random_draw(nsamples)
+    samples_r = wide_r_emu.random_draw(nsamples, rmin=rmin, rmax=rmax)
+    samples = pd.merge(samples_smc, samples_r, left_index=True, right_index=True)
+    sample_inds = partition(list(samples.index), nchunks)
+
+    deep_smc_emu.drop_kde()
+    wide_r_emu.drop_kde()
+    infodicts = []
+    for i in np.arange(nchunks):
+        info = {
+            "columns": columns,
+            "bandwidth": bandwidth,
+            "wide_cr_clust": wide_cr_clust,
+            "wide_cr_rands": wide_cr_rands,
+            "deep_c": deep_c,
+            "wide_r_ref": wide_r_ref,
+            "sample": samples.loc[sample_inds[i]],
+            "rmin": rmin,
+            "rmax": rmax,
+        }
+        infodicts.append(info)
+    return infodicts, samples
+
+
+def calc_scores2(info):
+    scores = pd.DataFrame()
+    try:
+        columns = info["columns"]
+        bandwidth = info["bandwidth"]
+        sample = info["sample"]
+
+        scores = pd.DataFrame()
+
+        dc_emu = info["deep_c"]["container"]
+        dc_emu.standardize_data()
+        dc_emu.construct_kde(bandwidth=bandwidth)
+        _score, _jacobian = dc_emu.score_samples(sample[columns["cols_dc"]])
+        scores["dc"] = _score
+        scores["dc_jac"] = _jacobian
+        # scores["dc_jac"] = 1.
+
+        wr_emu = info["wide_r_ref"]["container"]
+        wr_emu.standardize_data()
+        wr_emu.construct_kde(bandwidth=bandwidth)
+        _score, _jacobian = wr_emu.score_samples(sample[columns["cols_wr"]])
+        scores["wr"] = _score
+        scores["wr_jac"] = _jacobian
+        # scores["wr_jac"] = 1.
+
+        wcr_emu = info["wide_cr_clust"]["container"]
+        wcr_emu.standardize_data()
+        wcr_emu.construct_kde(bandwidth=bandwidth)
+        _score, _jacobian = wcr_emu.score_samples(sample[columns["cols_wcr"]])
+        scores["wcr_clust"] = _score
+        scores["wcr_clust_jac"] = _jacobian
+
+
+        wcr_emu = info["wide_cr_rands"]["container"]
+        wcr_emu.standardize_data()
+        wcr_emu.construct_kde(bandwidth=bandwidth)
+        _score, _jacobian = wcr_emu.score_samples(sample[columns["cols_wcr"]])
+        scores["wcr_rands"] = _score
+        scores["wcr_rands_jac"] = _jacobian
+        # scores["wcr_jac"] = 1.
+
+    except KeyboardInterrupt:
+        pass
+
+    return scores
+
+
+def run_scores2(infodicts):
+    pool = mp.Pool(processes=len(infodicts))
+    try:
+        pp = pool.map_async(calc_scores2, infodicts)
+        # the results here should be a list of score values
+        result = pp.get(86400)  # apparently this counters a bug in the exception passing in python.subprocess...
+    except KeyboardInterrupt:
+        print("Caught KeyboardInterrupt, terminating workers")
+        pool.terminate()
+        pool.join()
+    else:
+        pool.close()
+        pool.join()
+
+    return pd.concat(result)
 
 
 def make_naive_infodicts(wide_cr, wide_r, deep_c, deep_smc, columns,
