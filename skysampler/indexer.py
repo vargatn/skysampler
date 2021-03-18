@@ -510,6 +510,163 @@ def _indexer_chunk_run(chunks):
         pass
 
 
+class IndividualSurveyIndexer(object):
+    def __init__(self, survey, target, theta_edges, rcens, redges, rareas, search_radius=360., nbins=50, ind=0,
+                 flags=DEFAULT_FLAGS, **kwargs):
+
+        if isinstance(survey, dict):
+            self.survey = SurveyData.from_dict(survey)
+        else:
+            self.survey = survey
+
+        if isinstance(target, dict):
+            self.target = TargetData.from_dict(target)
+        else:
+            self.target = target
+        self.nrow = self.target.nrow
+
+        self.search_radius = search_radius
+
+        self.nbins = nbins
+        self.theta_edges = theta_edges
+        self.rcens = rcens
+        self.redges = redges
+        self.rareas = rareas
+        self.ind = ind
+
+        self.flags = flags
+
+        self._get_data()
+
+
+    def _get_data(self):
+        self.survey.get_data(self.ind)
+        if self.flags is not None:
+            flags = get_flags(self.survey.tab, self.flags)
+            self.survey.tab = self.survey.tab[flags]
+        else:
+            self.survey.tab = self.survey.tab
+
+    def run(self, fname="test"):
+        print(fname)
+        # pass
+        # self.index()
+        # result = self.draw_samples()
+        # pickle.dump(result, open(fname, "wb"))
+
+    def index(self):
+        print("starting survey indexing")
+        self.numprof = np.zeros(self.nbins + 2)
+        self.numprofiles = np.zeros((self.target.nrow, self.nbins + 2))
+        self.container = [[] for tmp in np.arange(self.nbins + 2)]
+        print("indexing samples")
+        for i in np.arange(self.target.nrow):
+            print(str(i) + "\t / \t" + str(self.target.nrow))
+            # logger.debug(str(i) + "/" + str(self.target.nrow))
+
+            trow = self.target.data.iloc[i]
+            tvec = hp.ang2vec(trow.RA, trow.DEC, lonlat=True)
+
+            _radius = self.search_radius / 60. / 180. * np.pi
+            dpixes = hp.query_disc(self.survey.nside, tvec, radius=_radius)
+
+            gals = []
+            for dpix in dpixes:
+                cmd = "IPIX == " + str(dpix)
+                gals.append(self.survey.tab.query(cmd))
+            gals = pd.concat(gals)
+
+            darr = np.sqrt((trow.RA - gals.RA) ** 2. + (trow.DEC - gals.DEC) ** 2.) * 60. # converting to arcmin
+            gals["DIST"] = darr
+
+            tmp = np.histogram(darr, bins=self.theta_edges)[0]
+            self.numprof += tmp
+            self.numprofiles[i] = tmp
+
+            for j in np.arange(self.nbins + 2):
+                cmd = str(self.theta_edges[j]) + " < DIST < " + str(self.theta_edges[j + 1])
+                rsub = gals.query(cmd)
+                self.container[j].append(rsub.index.values)
+
+        self.indexes, self.counts = [], []
+        for j in np.arange(self.nbins):
+            _uniqs, _counts = np.unique(np.concatenate(self.container[j]), return_counts=True)
+            self.indexes.append(_uniqs)
+            self.counts.append(_counts)
+
+        result = IndexedDataContainer(self.survey.lean_copy(), self.target.to_dict(),
+                                      self.numprof, self.indexes, self.counts,
+                                      self.theta_edges, self.rcens, self.redges, self.rareas)
+        # logger.info("finished survey indexing")
+        print("finished survey indexing")
+        return result
+
+    # def draw_samples(self, nsample=10000, rng=None):
+    #     # logger.info("starting drawing random subsample with nsample=" + str(nsample))
+    #     print("starting drawing random subsample with nsample=" + str(nsample))
+    #
+    #     if rng is None:
+    #         rng = np.random.RandomState()
+    #
+    #     num_to_draw = np.min((self.numprof, np.ones(self.nbins + 2) * nsample), axis=0).astype(int)
+    #     limit_draw = num_to_draw == nsample
+    #
+    #     self.sample_nrows = np.zeros(self.nbins + 2)
+    #     samples = [[] for tmp in np.arange(self.nbins + 2)]
+    #     self.samples = samples
+    #     print("drawing samples")
+    #     for i in np.arange(self.target.nrow):
+    #         print(str(i) + "\t / \t" + str(self.target.nrow))
+    #         # logger.debug(str(i) + "/" + str(self.target.nrow))
+    #
+    #         trow = self.target.data.iloc[i]
+    #         tvec = hp.ang2vec(trow.RA, trow.DEC, lonlat=True)
+    #
+    #         _radius = self.search_radius / 60. / 180. * np.pi
+    #         dpixes = hp.query_disc(self.survey.nside, tvec, radius=_radius)
+    #
+    #         gals = []
+    #         for dpix in dpixes:
+    #             cmd = "IPIX == " + str(dpix)
+    #             gals.append(self.survey.tab.query(cmd))
+    #         gals = pd.concat(gals)
+    #
+    #         darr = np.sqrt((trow.RA - gals.RA) ** 2. + (trow.DEC - gals.DEC) ** 2.) * 60.  # converting to arcmin
+    #         gals["DIST"] = darr
+    #
+    #         digits = np.digitize(darr, self.theta_edges) - 1.
+    #         gals["DIGIT"] = digits
+    #
+    #         for d in np.arange(self.nbins + 2):
+    #             cmd = "DIGIT == " + str(d)
+    #             rows = gals.query(cmd)
+    #
+    #             # tries to draw a subsample from around each cluster in each radial range
+    #             if limit_draw[d]:
+    #                 _ndraw = get_ndraw(nsample - self.sample_nrows[d], self.target.nrow - i)[0]
+    #                 ndraw = np.min((_ndraw, len(rows)))
+    #                 self.sample_nrows[d] += ndraw
+    #                 if ndraw > 0:
+    #                     ii = rng.choice(np.arange(len(rows)), ndraw, replace=False)
+    #                     samples[d].append(rows.iloc[ii])
+    #             else:
+    #                 # print("  ",len(rows))
+    #                 self.sample_nrows[d] += len(rows)
+    #                 samples[d].append(rows)
+    #
+    #     for d in np.arange(self.nbins + 2):
+    #         self.samples[d] = pd.concat(samples[d], ignore_index=True)
+    #
+    #     result = IndexedDataContainer(self.survey.lean_copy(), self.target.to_dict(),
+    #                                   self.numprof, self.indexes, self.counts,
+    #                                   self.theta_edges, self.rcens, self.redges, self.rareas,
+    #                                   self.samples, self.sample_nrows)
+    #     # logger.info("finished random draws")
+    #     print("finished random draws")
+    #
+    #     return result
+
+
 class SurveyIndexer(object):
     def __init__(self, survey, target, theta_edges, rcens, redges, rareas, search_radius=360., nbins=50, ind=0,
                  flags=DEFAULT_FLAGS, **kwargs):
