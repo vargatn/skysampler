@@ -11,7 +11,7 @@ setup(name="skysampler",
       install_requires=['numpy', 'scipy', 'pandas', 'astropy'],
       author="Tamas Norbert Varga",
       author_email="T.Varga@physik.lmu.de",
-      version="0.1")
+      version="0.2")
 
 # create user project file
 home_path = os.path.expanduser("~")
