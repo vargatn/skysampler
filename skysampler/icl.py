@@ -1,7 +1,9 @@
 """
 Interface to DES ICL measurements
 
-Following approach of Daniel Gruen
+Following approach of Daniel Gruen & Yuanyuan & Antonella
+
+# TODO this should go the the galsim ext package
 """
 
 import numpy as np

@@ -22,3 +22,18 @@ Contact
 In case of questions or if you would like to use parts of this pipeline in a publication, please contact me at ::
 
     T.Varga [at] physik.lmu.de
+
+
+Task outlines
+=============
+
+* Indexer
+* Emulator
+* ICL
+
+
+Data Formats
+============
+
+Since there are many different packages and environments, communication and data transfer should be with a set of standardized file formats
+

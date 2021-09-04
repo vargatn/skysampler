@@ -1,8 +1,15 @@
 """
 Module to handle survey data Processing and IO
-"""
 
+
+# TODO refactor all settings into somewhere else
+# TODO this should be runnable for DES and LSST
+# TODO logging should be set up for this package
+# TODO Testing and mock data should be implemented for this data
+"""
 from __future__ import print_function
+
+
 import glob
 import numpy as np
 import pandas as pd
@@ -18,14 +25,14 @@ from .paths import setup_logger, logfile_info, config
 
 BADVAL = -9999.
 
-DEFAULT_FLAGS = [
-    ("MOF_CM_FLAGS", "==", 0),
-    ("MOF_CM_T", "in", (0., 100)),
-    ("MOF_CM_MAG_CORRECTED_I", "in", (14, 24)),
-    (("MOF_CM_MAG_CORRECTED_G", "-", "MOF_CM_MAG_CORRECTED_R"), "in", (-4, 4)),
-    (("MOF_CM_MAG_CORRECTED_R", "-", "MOF_CM_MAG_CORRECTED_I"), "in", (-4, 4)),
-    (("MOF_CM_MAG_CORRECTED_I", "-", "MOF_CM_MAG_CORRECTED_Z"), "in", (-4, 4)),
-]
+# DEFAULT_FLAGS = [
+#     ("MOF_CM_FLAGS", "==", 0),
+#     ("MOF_CM_T", "in", (0., 100)),
+#     ("MOF_CM_MAG_CORRECTED_I", "in", (14, 24)),
+#     (("MOF_CM_MAG_CORRECTED_G", "-", "MOF_CM_MAG_CORRECTED_R"), "in", (-4, 4)),
+#     (("MOF_CM_MAG_CORRECTED_R", "-", "MOF_CM_MAG_CORRECTED_I"), "in", (-4, 4)),
+#     (("MOF_CM_MAG_CORRECTED_I", "-", "MOF_CM_MAG_CORRECTED_Z"), "in", (-4, 4)),
+# ]
 
 
 # logger = setup_logger("INDEXER", level=config["logging_level"], logfile_info=logfile_info)

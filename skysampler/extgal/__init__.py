@@ -21,3 +21,6 @@ conda install -c conda-forge galsim
 from . import sampler
 # from . import output
 from . import object
+
+
+# TODO move this into an entirely new package??
